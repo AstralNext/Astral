@@ -1,0 +1,368 @@
+import 'package:astral/config/app_dimensions.dart';
+import 'package:astral/config/app_theme_id.dart';
+import 'package:astral/config/app_theme_palette.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+export 'app_theme_id.dart';
+export 'app_theme_palette.dart';
+
+/// 主题切换与水滴揭示动画参数。
+abstract final class AppThemeAnimation {
+  static const revealDuration = Duration(milliseconds: 580);
+  static const revealCurve = Curves.easeOutCubic;
+  static const duration = Duration.zero;
+  static const curve = Curves.linear;
+}
+
+/// Material 3 主题构建。
+abstract final class AstralTheme {
+  static ThemeData build(AppThemeId id) => _createThemeData(id);
+
+  static ThemeData get defaultTheme => build(kDefaultAppThemeId);
+
+  static ThemeData _createThemeData(AppThemeId id) {
+    final palette = AppThemePalette.of(id);
+    final isDarkSurface = palette.background.computeLuminance() < 0.45;
+    final brightness =
+        isDarkSurface ? Brightness.dark : Brightness.light;
+
+    final page = palette.background;
+    final raised = palette.card;
+    final inset = palette.canvas;
+    final insetDeep = Color.lerp(inset, palette.textPrimary, 0.06)!;
+    final mid = Color.lerp(page, inset, 0.55)!;
+
+    final colorScheme = ColorScheme(
+      brightness: brightness,
+      primary: palette.accent,
+      onPrimary: palette.onAccent,
+      secondary: palette.accent,
+      onSecondary: palette.onAccent,
+      error: palette.error,
+      onError: palette.onError,
+      surface: raised,
+      onSurface: palette.textPrimary,
+      onSurfaceVariant: palette.textSecondary,
+      outline: palette.divider,
+      outlineVariant: Color.lerp(palette.divider, page, 0.35)!,
+      primaryContainer: palette.accentMutedStrong,
+      onPrimaryContainer: palette.textPrimary,
+      surfaceContainerLowest: page,
+      surfaceContainerLow: raised,
+      surfaceContainer: mid,
+      surfaceContainerHigh: inset,
+      surfaceContainerHighest: insetDeep,
+    );
+
+    final splash = palette.accentMuted;
+    final highlight = palette.accent.withValues(alpha: 0.06);
+    final overlayStyle = isDarkSurface
+        ? SystemUiOverlayStyle.light
+        : SystemUiOverlayStyle.dark;
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: page,
+      canvasColor: page,
+      dividerColor: palette.divider,
+      splashColor: splash,
+      highlightColor: highlight,
+      hoverColor: palette.accent.withValues(alpha: 0.04),
+      extensions: [AstralPaletteExtension(palette)],
+      dividerTheme: DividerThemeData(
+        color: palette.divider,
+        thickness: 1,
+        space: 1,
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: palette.accent,
+        textColor: palette.textPrimary,
+      ),
+      appBarTheme: AppBarTheme(
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: true,
+        backgroundColor: page,
+        foregroundColor: palette.textPrimary,
+        systemOverlayStyle: overlayStyle,
+        titleTextStyle: TextStyle(
+          fontSize: 17,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.2,
+          color: palette.textPrimary,
+        ),
+      ),
+      cardTheme: CardThemeData(
+        color: raised,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusMd),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 72,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        backgroundColor: raised,
+        indicatorColor: palette.accent.withValues(alpha: 0.14),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 11,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? palette.accent : palette.textSecondary,
+            letterSpacing: 0.1,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: AppDimensions.iconSize,
+            color: selected ? palette.accent : palette.textTertiary,
+          );
+        }),
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: palette.sidebar,
+        indicatorColor: palette.accent.withValues(alpha: 0.14),
+        selectedIconTheme: IconThemeData(color: palette.accent),
+        unselectedIconTheme: IconThemeData(color: palette.textTertiary),
+        selectedLabelTextStyle: TextStyle(
+          color: palette.accent,
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
+        unselectedLabelTextStyle: TextStyle(
+          color: palette.textSecondary,
+          fontWeight: FontWeight.w400,
+          fontSize: 12,
+        ),
+      ),
+      iconTheme: IconThemeData(
+        size: AppDimensions.iconSize,
+        color: palette.textSecondary,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: palette.accent,
+          foregroundColor: palette.onAccent,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: palette.accent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: palette.accent),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: palette.card,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusLg),
+        ),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: palette.card,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppDimensions.radiusLg),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: palette.canvas,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
+          borderSide: BorderSide(color: palette.accent, width: 1.5),
+        ),
+        labelStyle: TextStyle(color: palette.textSecondary),
+        hintStyle: TextStyle(color: palette.textTertiary),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return palette.onAccent;
+          return palette.textTertiary;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return palette.accent;
+          }
+          return palette.divider;
+        }),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: palette.accent),
+      textTheme: TextTheme(
+        displayLarge: TextStyle(
+          fontSize: 48,
+          fontWeight: FontWeight.w700,
+          height: 1.1,
+          letterSpacing: -1,
+          color: palette.textPrimary,
+        ),
+        displayMedium: TextStyle(
+          fontSize: 36,
+          fontWeight: FontWeight.w700,
+          height: 1.15,
+          letterSpacing: -0.5,
+          color: palette.textPrimary,
+        ),
+        headlineMedium: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+          color: palette.textPrimary,
+        ),
+        titleMedium: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          color: palette.textPrimary,
+        ),
+        bodyLarge: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w400,
+          height: 1.5,
+          color: palette.textPrimary,
+        ),
+        bodyMedium: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          height: 1.45,
+          color: palette.textSecondary,
+        ),
+        bodySmall: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+          color: palette.textTertiary,
+        ),
+        labelLarge: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.3,
+          color: palette.textSecondary,
+        ),
+      ),
+    );
+  }
+}
+
+@immutable
+class AstralPaletteExtension extends ThemeExtension<AstralPaletteExtension> {
+  const AstralPaletteExtension(this.palette);
+
+  final AppThemePalette palette;
+
+  @override
+  AstralPaletteExtension copyWith({AppThemePalette? palette}) {
+    return AstralPaletteExtension(palette ?? this.palette);
+  }
+
+  @override
+  AstralPaletteExtension lerp(
+    covariant ThemeExtension<AstralPaletteExtension>? other,
+    double t,
+  ) {
+    if (other is! AstralPaletteExtension) return this;
+    return AstralPaletteExtension(palette.lerp(other.palette, t));
+  }
+}
+
+extension AstralThemeContext on BuildContext {
+  AppThemePalette get astralPalette {
+    final extension = Theme.of(this).extension<AstralPaletteExtension>();
+    if (extension != null) return extension.palette;
+    return AppThemePalette.of(kDefaultAppThemeId);
+  }
+}
+
+/// 侧栏 / 标题栏等壳层区域底色，与内容区 [background] 拉开层次。
+extension AppThemePaletteShell on AppThemePalette {
+  Color get sidebar {
+    final isDark = background.computeLuminance() < 0.45;
+    if (isDark) {
+      // 深色：略亮于页底，接近 card。
+      return Color.lerp(canvas, card, 0.35)!;
+    }
+    // 浅色：白卡色壳层压在有色页底上，层次最清楚。
+    return card;
+  }
+}
+
+/// 内容区表面层级（MD3：靠 tonal 色差分层，默认无描边、无阴影）。
+enum AstralSurfaceVariant {
+  /// 相对页面底抬升一层（surface → surfaceContainerLow / card）。
+  raised,
+
+  /// 凹槽：路径栏、只读块等（surfaceContainer / canvas）。
+  inset,
+
+  /// 仅填色，不暗示层级。
+  plain,
+}
+
+extension AppThemePaletteSurfaces on AppThemePalette {
+  /// 表面填色（与 [surfaceDecoration] 同一套 tonal / state layer 规则）。
+  Color surfaceColor({
+    AstralSurfaceVariant variant = AstralSurfaceVariant.raised,
+    Color? color,
+    bool emphasized = false,
+    bool hovered = false,
+  }) {
+    final Color base = switch (variant) {
+      AstralSurfaceVariant.plain => color ?? card,
+      AstralSurfaceVariant.inset => color ?? canvas,
+      AstralSurfaceVariant.raised => color ?? card,
+    };
+
+    if (hovered) {
+      return Color.alphaBlend(accent.withValues(alpha: 0.08), base);
+    }
+    if (emphasized) {
+      return Color.alphaBlend(accent.withValues(alpha: 0.06), base);
+    }
+    return base;
+  }
+
+  BoxDecoration surfaceDecoration({
+    AstralSurfaceVariant variant = AstralSurfaceVariant.raised,
+    double radius = AppDimensions.radiusMd,
+    Color? color,
+    bool emphasized = false,
+    bool hovered = false,
+  }) {
+    return BoxDecoration(
+      color: surfaceColor(
+        variant: variant,
+        color: color,
+        emphasized: emphasized,
+        hovered: hovered,
+      ),
+      borderRadius: BorderRadius.circular(radius),
+    );
+  }
+}

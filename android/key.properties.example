@@ -1,0 +1,6 @@
+storePassword=
+keyPassword=
+keyAlias=astral
+# Path relative to android/app/ (this module). Example:
+# storeFile=../keystore/astral-release.jks
+storeFile=

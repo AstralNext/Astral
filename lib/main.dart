@@ -1,0 +1,40 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:astral/di.dart';
+import 'package:astral/utils/single_instance_guard.dart';
+import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
+
+import 'ui/app.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  ui.DartPluginRegistrant.ensureInitialized();
+
+  if (!await SingleInstanceGuard.tryAcquire()) {
+    return;
+  }
+
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    await windowManager.ensureInitialized();
+
+    const windowOptions = WindowOptions(
+      size: Size(940, 560),
+      minimumSize: Size(800, 500),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.hidden,
+    );
+    await windowManager.waitUntilReadyToShow(windowOptions);
+  }
+
+  await setupDI();
+  runApp(const AstralApp());
+
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+}
