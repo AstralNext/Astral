@@ -234,7 +234,7 @@ jobs:
         run: |
           $line = Get-Content "pubspec.yaml" | Where-Object { $_ -match '^\s*version:\s*' } | Select-Object -First 1
           if (-not $line) { throw "version: not found in pubspec.yaml" }
-          if ($line -match 'version:\s*([\d.]+)') {
+          if ($line -match 'version:\s*([0-9][^\s+#]*)') {
             $v = $Matches[1]
           } else {
             throw "Could not parse version from: $line"
