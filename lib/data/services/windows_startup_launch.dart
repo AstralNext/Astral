@@ -4,7 +4,7 @@ import 'dart:io';
 class WindowsStartupLaunch {
   WindowsStartupLaunch._();
 
-  static const valueName = 'Astral';
+  static const valueName = 'AstralNext';
   static const _runKey =
       r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
 

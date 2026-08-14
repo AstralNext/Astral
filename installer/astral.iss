@@ -10,6 +10,7 @@
 #endif
 
 #define MyAppName "Astral"
+#define MyAppDirName "AstralNext"
 #define MyAppPublisher "AstralNext"
 #define MyAppExeName "astral.exe"
 #define BuildOutput "..\build\windows\x64\runner\Release"
@@ -19,7 +20,8 @@ AppId={{A1C3E5F7-2B4D-4A6C-8E0F-1D3B5A7C9E2F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+; 目录用 AstralNext，避免与旧版 Program Files\Astral 冲突；显示名仍为 Astral
+DefaultDirName={autopf}\{#MyAppDirName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

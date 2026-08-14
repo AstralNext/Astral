@@ -36,11 +36,11 @@ class SingleInstanceGuard {
       final base = Platform.environment['LOCALAPPDATA'] ??
           Platform.environment['APPDATA'] ??
           Directory.systemTemp.path;
-      return p.join(base, 'Astral', 'single_instance.lock');
+      return p.join(base, 'AstralNext', 'single_instance.lock');
     }
     final home = Platform.environment['HOME'];
     if (home != null && home.isNotEmpty) {
-      return p.join(home, '.astral', 'single_instance.lock');
+      return p.join(home, '.astralnext', 'single_instance.lock');
     }
     return p.join(Directory.systemTemp.path, 'astral.single_instance.lock');
   }
