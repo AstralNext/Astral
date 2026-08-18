@@ -122,11 +122,6 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
       } catch (_) {}
     }
     await syncRunningInstances();
-    if (getIt<UpdateState>().autoCheckUpdate.value) {
-      try {
-        await getIt<CoreServiceController>().checkUpdate(applyIfNewer: true);
-      } catch (_) {}
-    }
   }
 
   Future<void> _setupDesktopCloseBehavior() async {

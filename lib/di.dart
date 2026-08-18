@@ -65,7 +65,7 @@ Future<void> setupDI() async {
     );
     try {
       await getIt<CoreServiceController>().ensureProvisioned(
-        allowNetwork: false,
+        allowElevate: false,
       );
     } catch (e) {
       getIt<LogService>().warn('DI', '自动准备内核失败: $e');
@@ -136,7 +136,6 @@ Future<KernelEngine> _createKernelEngine() async {
   if (KernelMode.forPlatform() == KernelMode.service) {
     return ServiceKernelEngine(
       host: getIt<CoreHost>(),
-      settings: getIt<AppSettingsService>(),
       log: getIt<LogService>(),
     );
   }

@@ -134,6 +134,7 @@ jobs:
             cmake \
             pkg-config \
             libcurl4-openssl-dev \
+            libssl-dev \
             protobuf-compiler \
             libayatana-appindicator3-dev \
             libnotify-dev \
@@ -156,6 +157,26 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+
+      - name: Checkout astral-core
+        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
+        uses: actions/checkout@v5
+        with:
+          repository: AstralNext/astral-core
+          path: astral-core-src
+
+      - name: Build bundled astral-core
+        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
+        working-directory: astral-core-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            echo "ASTRAL_CORE_EXE=${GITHUB_WORKSPACE}/astral-core-src/target/release/astral-core.exe" >> "$GITHUB_ENV"
+          else
+            echo "ASTRAL_CORE_EXE=${GITHUB_WORKSPACE}/astral-core-src/target/release/astral-core" >> "$GITHUB_ENV"
+          fi
 
       - name: Windows native build prerequisites
         if: runner.os == 'Windows'
@@ -207,6 +228,18 @@ jobs:
       - name: Build for ${{ matrix.platform }}
         run: ${{ matrix.build_cmd }}
         shell: bash
+
+      - name: Verify bundled astral-core
+        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.flutter_platform }}" = "windows" ]; then
+            test -f "${{ matrix.artifact_path }}/astral-core.exe"
+          else
+            test -f "${{ matrix.artifact_path }}/astral-core"
+          fi
+          ls -la "${{ matrix.artifact_path }}" | head
 
       - name: Package Linux app
         if: matrix.flutter_platform == 'linux'

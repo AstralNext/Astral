@@ -39,7 +39,7 @@ migrate_working_dir/
 # Local scratch / accident recovery scripts
 /_recover_*.py
 
-# Do not bundle astral-core into the Flutter client
+# Do not commit bundled kernels; they are copied next to the GUI at build time.
 /windows/runner/astral-core.exe
 /windows/native/*.exe
 

@@ -9,7 +9,6 @@ import 'package:astral/data/state/update_state.dart';
 import 'package:astral/di.dart';
 import 'package:astral/ui/pages/settings/about_page.dart';
 import 'package:astral/ui/pages/settings/kernel_settings_section.dart';
-import 'package:astral/ui/pages/settings/storage_settings_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/widgets/astral_settings_section.dart';
 import 'package:astral/ui/widgets/astral_snack.dart';
@@ -100,7 +99,7 @@ class SettingsPage extends StatelessWidget {
                 return SwitchListTile(
                   secondary: const Icon(Icons.system_update_alt),
                   title: const Text('自动检查更新'),
-                  subtitle: const Text('启动时检查客户端与内核更新并自动安装内核'),
+                  subtitle: const Text('启动时检查客户端更新'),
                   value: updateState.autoCheckUpdate.value,
                   onChanged: updateState.setAutoCheckUpdate,
                 );
@@ -117,22 +116,6 @@ class SettingsPage extends StatelessWidget {
               }),
             ],
           ),
-        ),
-        const SizedBox(height: AppDimensions.sectionGap),
-
-        AstralSettingsSection(
-          title: '数据',
-          items: [
-            AstralSettingItem(
-              icon: Icons.folder_outlined,
-              label: '数据存储',
-              subtitle: '实例与配置存放位置',
-              onTap: () => _openSubpage(
-                page: const StorageSettingsPage(),
-                title: '数据存储',
-              ),
-            ),
-          ],
         ),
         const SizedBox(height: AppDimensions.sectionGap),
 

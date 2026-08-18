@@ -6,7 +6,6 @@ import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_mode.dart';
 import 'package:astral/data/services/app_settings_service.dart';
 import 'package:astral/data/services/log_service.dart';
-import 'package:astral/data/state/settings_state.dart';
 import 'package:get_it/get_it.dart';
 import 'package:signals/signals.dart';
 
@@ -32,54 +31,73 @@ class CoreServiceController {
   final state = signal(CoreInstallState.unknown);
   final version = signal('');
   final latestVersion = signal<String?>(null);
+  final bundledDiffers = signal(false);
   final busy = signal(false);
   final lastMessage = signal<String?>(null);
 
-  late final hasUpdate = computed(() {
-    final latest = latestVersion.value;
-    if (latest == null) return false;
-    return _updater.isNewer(latest, version.value);
-  });
+  late final hasUpdate = computed(() => bundledDiffers.value);
 
   Future<void> refresh() async {
     try {
-      final next = await _host.queryInstallState(
-        configured: _settings.getCoreBinaryPath(),
-      );
+      final next = await _host.queryInstallState();
       state.value = next;
-      final binary = await _host.findBinary(_settings.getCoreBinaryPath());
+      final binary = await _host.findBinary(null);
       version.value = (await _host.readVersion(binary)) ?? '';
+      bundledDiffers.value = await _bundledDiffersFromCurrent();
     } catch (e) {
       _log.warn(_module, '刷新服务状态失败: $e');
       state.value = CoreInstallState.unknown;
     }
   }
 
-  /// 启动时自动准备。
-  /// [allowNetwork] 为 false 时只拉起已安装服务，避免把首次启动卡在下载 / UAC。
-  Future<void> ensureProvisioned({bool allowNetwork = true}) async {
-    await refresh();
-    try {
-      if (state.value == CoreInstallState.stopped) {
-        lastMessage.value = await start();
-        return;
-      }
-      if (state.value == CoreInstallState.running) return;
-      if (!allowNetwork) return;
+  Future<bool> _bundledDiffersFromCurrent() async {
+    final bundled = File(_host.bundledProgramPath());
+    final current = File(_host.currentProgramPath());
+    if (!bundled.existsSync()) return false;
+    if (!current.existsSync()) return true;
+    return !await _host.binariesMatch(bundled.path, current.path);
+  }
 
-      final optedOut = _settings.getCoreServiceOptOut();
-      if (state.value == CoreInstallState.unknown) {
-        await _resolveUnknown(optedOut: optedOut);
-        return;
+  /// 启动时：用软件携带的内核对比已安装服务，不同则复制进去。
+  /// [allowElevate] 为 false 时不安装/覆盖，避免启动瞬间弹出 UAC。
+  Future<void> ensureProvisioned({bool allowElevate = true}) async {
+    try {
+      final bundled = await _host.materializeBundledProgram();
+      if (bundled != null) {
+        await _host.ensureRuntimeSidecars(nearProgram: bundled);
       }
-      if (optedOut) {
-        if (state.value == CoreInstallState.missingBinary) {
-          lastMessage.value = await downloadLatest();
+      await refresh();
+
+      if (_settings.getCoreServiceOptOut()) {
+        if (state.value == CoreInstallState.stopped) {
+          lastMessage.value = await start();
         }
         return;
       }
-      lastMessage.value = await install();
-      await refresh();
+
+      if (bundled == null) {
+        if (state.value == CoreInstallState.stopped) {
+          lastMessage.value = await start();
+        } else if (!state.value.isInstalled) {
+          lastMessage.value = '未找到随软件携带的 astral-core';
+          _log.warn(_module, lastMessage.value!);
+        }
+        return;
+      }
+
+      final current = _host.currentProgramPath();
+      final installed = state.value.isInstalled;
+      final currentMissing = !File(current).existsSync();
+      final differs =
+          currentMissing || !await _host.binariesMatch(bundled, current);
+
+      if (!installed || differs) {
+        if (!allowElevate) return;
+        lastMessage.value = await syncFromBundled(program: bundled);
+        return;
+      }
+
+      await _copySidecars(bundled);
       if (state.value == CoreInstallState.stopped) {
         lastMessage.value = await start();
       }
@@ -87,26 +105,6 @@ class CoreServiceController {
       _log.warn(_module, '自动准备内核失败: $e');
       lastMessage.value = '$e';
     }
-  }
-
-  Future<void> _resolveUnknown({required bool optedOut}) async {
-    final binary = await _host.findBinary(_settings.getCoreBinaryPath());
-    if (binary != null) {
-      final started = await _host.startService(binary: binary);
-      if (started.ok || CoreHost.looksLikeAlreadyRunning(started)) {
-        await refresh();
-        return;
-      }
-      if (!CoreHost.looksLikeNotInstalled(started)) {
-        _log.warn(_module, '状态未知且启动失败，跳过自动安装: ${started.output}');
-        return;
-      }
-    }
-    if (optedOut) {
-      if (binary == null) lastMessage.value = await downloadLatest();
-      return;
-    }
-    lastMessage.value = await install();
   }
 
   Future<String> _guard(
@@ -132,13 +130,6 @@ class CoreServiceController {
 
   bool get _wantPrerelease => _settings.getUpdateBetaChannel();
 
-  Future<void> _persistBinaryPath(String path) async {
-    await _settings.setCoreBinaryPath(path);
-    if (GetIt.I.isRegistered<SettingsState>()) {
-      GetIt.I<SettingsState>().coreBinaryPath.value = path;
-    }
-  }
-
   Future<void> _reconnectEngine() async {
     if (!GetIt.I.isRegistered<KernelEngine>()) return;
     final engine = GetIt.I<KernelEngine>();
@@ -154,14 +145,12 @@ class CoreServiceController {
   Future<bool> _okOrNowInstalled(CoreCliResult result) async {
     if (result.ok) return true;
     if (!Platform.isWindows) return false;
-    final next = await _host.queryInstallState(
-      configured: _settings.getCoreBinaryPath(),
-    );
+    final next = await _host.queryInstallState();
     return next.isInstalled;
   }
 
   Future<String> start() => _guard(() async {
-    final binary = await _host.findBinary(_settings.getCoreBinaryPath());
+    final binary = await _host.findBinary(null);
     if (binary == null) {
       throw StateError('未找到 astral-core，请先安装服务');
     }
@@ -176,42 +165,76 @@ class CoreServiceController {
   }, reconnect: true);
 
   Future<String> stop() => _guard(() async {
-    final r = await _host.stopService(
-      binary: await _host.findBinary(_settings.getCoreBinaryPath()),
-    );
+    final r = await _host.stopService(binary: await _host.findBinary(null));
     if (!r.ok) throw StateError(r.output.isEmpty ? '停止失败' : r.output);
     return '内核服务已停止';
   });
 
   Future<String> install({String? program}) => _guard(() async {
-    var binary =
-        program ?? await _host.findBinary(_settings.getCoreBinaryPath());
+    return _installUnlocked(program: program);
+  }, reconnect: true);
+
+  Future<String> _installUnlocked({String? program}) async {
+    final binary = program ?? await _host.materializeBundledProgram();
     if (binary == null) {
-      binary = await _downloadLatestUnlocked();
-    }
-    if (_settings.getCoreBinaryPath().trim().isEmpty) {
-      await _persistBinaryPath(binary);
+      throw StateError('未找到随软件携带的 astral-core');
     }
     await _settings.setCoreServiceOptOut(false);
     if (state.value == CoreInstallState.notInstalled ||
         state.value == CoreInstallState.missingBinary) {
-      await _host.stopDetachedListener(_settings.getCoreTarget());
+      await _host.stopDetachedListener(CoreHost.defaultListen);
     }
     final r = await _host.installService(
       binary: binary,
-      listen: _settings.getCoreTarget(),
+      listen: CoreHost.defaultListen,
     );
     if (!await _okOrNowInstalled(r)) {
       throw StateError(r.output.isEmpty ? '安装失败' : r.output);
     }
     await _copySidecars(binary);
     return '已安装内核服务并开机自启';
+  }
+
+  /// 用 GUI 旁边携带的内核安装或覆盖系统服务。
+  Future<String> syncFromBundled({String? program}) => _guard(() async {
+    final bundled = program ?? await _host.materializeBundledProgram();
+    if (bundled == null) {
+      throw StateError('未找到随软件携带的 astral-core');
+    }
+    await _host.ensureRuntimeSidecars(nearProgram: bundled);
+    final latestState = await _host.queryInstallState(configured: bundled);
+    if (!latestState.isInstalled) {
+      return _installUnlocked(program: bundled);
+    }
+    final current = _host.currentProgramPath();
+    if (File(current).existsSync() &&
+        await _host.binariesMatch(bundled, current)) {
+      await _copySidecars(bundled);
+      if (latestState == CoreInstallState.stopped) {
+        final started = await _host.startService(binary: bundled);
+        if (!started.ok && !CoreHost.looksLikeAlreadyRunning(started)) {
+          throw StateError(started.output.isEmpty ? '启动失败' : started.output);
+        }
+      }
+      return '内核已与软件携带版本一致';
+    }
+    final r = await _host.updateService(newProgram: bundled, binary: bundled);
+    if (!r.ok && Platform.isWindows) {
+      final after = await _host.queryInstallState(configured: bundled);
+      if (!after.isInstalled) {
+        throw StateError(r.output.isEmpty ? '更新失败' : r.output);
+      }
+    } else if (!r.ok) {
+      throw StateError(r.output.isEmpty ? '更新失败' : r.output);
+    }
+    await _copySidecars(bundled);
+    return '已用软件携带的内核更新服务';
   }, reconnect: true);
 
   Future<String> uninstall() => _guard(() async {
     await _settings.setCoreServiceOptOut(true);
     final r = await _host.uninstallService(
-      binary: await _host.findBinary(_settings.getCoreBinaryPath()),
+      binary: await _host.findBinary(null),
     );
     if (r.ok) return '已卸载系统服务';
     await refresh();
@@ -219,7 +242,7 @@ class CoreServiceController {
     throw StateError(r.output.isEmpty ? '卸载失败' : r.output);
   });
 
-  /// 未安装则安装（必要时先下载），已安装则卸载。
+  /// 未安装则用携带的内核安装，已安装则卸载。
   Future<String> toggleInstall() {
     if (state.value.isInstalled) return uninstall();
     return install();
@@ -238,7 +261,6 @@ class CoreServiceController {
       throw StateError('无法获取当前平台的 astral-core 发行包');
     }
     final exe = await _updater.downloadRelease(release);
-    await _persistBinaryPath(exe);
     latestVersion.value = release.version;
     await _updater.copySidecarsNextTo(exe);
     return exe;
@@ -280,12 +302,11 @@ class CoreServiceController {
       return '内核已是最新 ${release.version}';
     }
     final exe = await _updater.downloadRelease(release);
-    await _persistBinaryPath(exe);
     await _settings.setCoreServiceOptOut(false);
     final latestState = await _host.queryInstallState(configured: exe);
     if (latestState == CoreInstallState.notInstalled ||
         latestState == CoreInstallState.missingBinary) {
-      await _host.stopDetachedListener(_settings.getCoreTarget());
+      await _host.stopDetachedListener(CoreHost.defaultListen);
     }
     if (latestState.isInstalled) {
       final r = await _host.updateService(newProgram: exe, binary: exe);
@@ -300,7 +321,7 @@ class CoreServiceController {
     } else {
       final r = await _host.installService(
         binary: exe,
-        listen: _settings.getCoreTarget(),
+        listen: CoreHost.defaultListen,
       );
       if (!await _okOrNowInstalled(r)) {
         throw StateError(r.output.isEmpty ? '安装失败' : r.output);

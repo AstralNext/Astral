@@ -10,16 +10,12 @@ class SettingsState {
   final closeMinimize = signal(true);
   final appThemeId = signal(kDefaultAppThemeId);
   final launchAtStartup = signal(false);
-  final coreTarget = signal(AppSettingsService.defaultCoreTarget);
-  final coreBinaryPath = signal('');
 
   void loadFromPersistence() {
     final settings = GetIt.I<AppSettingsService>();
     closeMinimize.value = settings.getCloseMinimize();
     appThemeId.value = AppThemeIdCodec.fromIndex(settings.getAppThemeIndex());
     launchAtStartup.value = settings.isLaunchAtStartup();
-    coreTarget.value = settings.getCoreTarget();
-    coreBinaryPath.value = settings.getCoreBinaryPath();
 
     // Sync registry → prefs if user changed it outside the app.
     if (Platform.isWindows) {
@@ -38,12 +34,6 @@ class SettingsState {
       settings.setCloseMinimize(closeMinimize.value),
       settings.setAppThemeIndex(appThemeId.value.storageIndex),
       settings.setLaunchAtStartup(launchAtStartup.value),
-      settings.setCoreTarget(
-        coreTarget.value.trim().isEmpty
-            ? AppSettingsService.defaultCoreTarget
-            : coreTarget.value.trim(),
-      ),
-      settings.setCoreBinaryPath(coreBinaryPath.value.trim()),
     ]);
   }
 

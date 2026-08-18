@@ -75,7 +75,6 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
         final state = core.state.value;
         final busy = core.busy.value;
         final version = core.version.value;
-        final latest = core.latestVersion.value;
         final hasUpdate = core.hasUpdate.value;
         final installed = state.isInstalled;
         final engine = _engine;
@@ -127,16 +126,14 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
             const AstralSettingsDivider(),
             ListTile(
               leading: Icon(
-                hasUpdate
-                    ? Icons.system_update_alt
-                    : Icons.system_update_alt_outlined,
+                hasUpdate ? Icons.system_update_alt : Icons.sync_outlined,
               ),
-              title: Text(hasUpdate ? '更新服务到 ${latest ?? ''}' : '更新服务'),
+              title: Text(hasUpdate ? '同步携带的内核' : '内核已与软件一致'),
               subtitle: Text(
-                hasUpdate ? '当前 $version，将下载并替换内核' : '检查并安装 astral-core 新版本',
+                hasUpdate ? '用本软件自带的 astral-core 覆盖系统服务' : '启动时会自动对比，无需从网上更新内核',
               ),
-              enabled: !busy,
-              onTap: () => unawaited(_run(() => core.applyUpdate())),
+              enabled: !busy && hasUpdate,
+              onTap: () => unawaited(_run(() => core.syncFromBundled())),
             ),
           ],
         );

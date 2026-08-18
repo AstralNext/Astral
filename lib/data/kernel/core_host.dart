@@ -1,6 +1,7 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 enum CoreInstallState {
@@ -50,6 +51,8 @@ class CoreHost {
 
   static String get binaryName =>
       Platform.isWindows ? 'astral-core.exe' : 'astral-core';
+
+  static const defaultListen = '127.0.0.1:50051';
 
   String dataRoot() {
     if (Platform.isWindows) {
@@ -104,6 +107,10 @@ class CoreHost {
   String currentProgramPath() =>
       p.join(defaultInstallRoot(), 'current', binaryName);
 
+  /// 发行包 / `flutter run` 输出目录里，与 GUI 并排的内核。
+  String bundledProgramPath() =>
+      p.join(File(Platform.resolvedExecutable).parent.path, binaryName);
+
   String managedBinDir() {
     if (Platform.isWindows) {
       final local = Platform.environment['LOCALAPPDATA'] ?? '';
@@ -140,7 +147,7 @@ class CoreHost {
     if (configured != null && configured.trim().isNotEmpty) {
       add(configured.trim());
     }
-    add(p.join(File(Platform.resolvedExecutable).parent.path, binaryName));
+    add(bundledProgramPath());
     add(currentProgramPath());
     add(p.join(managedBinDir(), binaryName));
     for (final path in _devCheckoutBinaries()) {
@@ -177,7 +184,7 @@ class CoreHost {
     return [
       if (nearProgram != null && nearProgram.trim().isNotEmpty)
         File(nearProgram.trim()).parent.path,
-      File(Platform.resolvedExecutable).parent.path,
+      File(bundledProgramPath()).parent.path,
       p.join(Directory.current.path, 'dlls'),
       managedBinDir(),
     ];
@@ -212,21 +219,15 @@ class CoreHost {
     return null;
   }
 
-  /// 比已安装 `current` 更新的本地二进制，供协议不匹配时 `service update`。
-  Future<String?> findUpgradeBinary(String? configured) async {
-    final current = currentProgramPath();
-    final currentFile = File(current);
-    DateTime? currentMtime;
-    if (currentFile.existsSync()) {
-      try {
-        currentMtime = currentFile.lastModifiedSync();
-      } catch (_) {}
-    }
+  /// 开发时若 GUI 旁没有内核，从并列仓库构建产物拷过去。
+  Future<String?> materializeBundledProgram() async {
+    final dest = bundledProgramPath();
+    final destFile = File(dest);
+    if (destFile.existsSync()) return dest;
 
-    String? best;
-    DateTime? bestMtime;
-    for (final path in binaryCandidates(configured)) {
-      if (p.equals(p.normalize(path), p.normalize(current))) continue;
+    String? newest;
+    DateTime? newestMtime;
+    for (final path in _devCheckoutBinaries()) {
       final file = File(path);
       if (!file.existsSync()) continue;
       DateTime mtime;
@@ -235,13 +236,54 @@ class CoreHost {
       } catch (_) {
         continue;
       }
-      if (currentMtime != null && !mtime.isAfter(currentMtime)) continue;
-      if (best == null || mtime.isAfter(bestMtime!)) {
-        best = path;
-        bestMtime = mtime;
+      if (newest == null || mtime.isAfter(newestMtime!)) {
+        newest = path;
+        newestMtime = mtime;
       }
     }
-    return best;
+    if (newest == null) return null;
+    if (p.equals(newest, dest)) return dest;
+    await Directory(File(dest).parent.path).create(recursive: true);
+    await File(newest).copy(dest);
+    if (!Platform.isWindows) {
+      await Process.run('chmod', ['+x', dest]);
+    }
+    await ensureRuntimeSidecars(nearProgram: dest);
+    return dest;
+  }
+
+  static Future<String> sha256File(String path) async {
+    final digest = await sha256.bind(File(path).openRead()).first;
+    return digest.toString();
+  }
+
+  /// 大小不同则直接视为不一致；相同再比 SHA-256。
+  Future<bool> binariesMatch(String a, String b) async {
+    final fa = File(a);
+    final fb = File(b);
+    if (!fa.existsSync() || !fb.existsSync()) return false;
+    if (p.equals(p.normalize(a), p.normalize(b))) return true;
+    int sizeA;
+    int sizeB;
+    try {
+      sizeA = fa.lengthSync();
+      sizeB = fb.lengthSync();
+    } catch (_) {
+      return false;
+    }
+    if (sizeA != sizeB) return false;
+    return await sha256File(a) == await sha256File(b);
+  }
+
+  Future<String?> findUpgradeBinary(String? configured) async {
+    final bundled = await materializeBundledProgram();
+    if (bundled != null) return bundled;
+    if (configured != null &&
+        configured.trim().isNotEmpty &&
+        File(configured.trim()).existsSync()) {
+      return configured.trim();
+    }
+    return findBinary(configured);
   }
 
   Future<String?> findBinary(String? configured) async {
@@ -355,12 +397,7 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     String? binary,
     bool elevateIfNeeded = true,
   }) async {
-    final args = [
-      'service',
-      action,
-      if (useUserService) '--user',
-      ...extra,
-    ];
+    final args = ['service', action, if (useUserService) '--user', ...extra];
     var result = await runArgs(args, binary: binary);
     if (elevateIfNeeded &&
         Platform.isWindows &&

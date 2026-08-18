@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:astral/data/kernel/core_host.dart';
 import 'package:astral/data/kernel/core_update_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('parseInstallState', () {
@@ -59,6 +62,10 @@ void main() {
         isTrue,
       );
     });
+
+    test('listens on loopback by default', () {
+      expect(CoreHost.defaultListen, '127.0.0.1:50051');
+    });
   });
 
   group('CoreUpdateService.isNewer', () {
@@ -107,6 +114,28 @@ void main() {
     test('lists wintun and Packet', () {
       expect(CoreHost.windowsSidecars, contains('wintun.dll'));
       expect(CoreHost.windowsSidecars, contains('Packet.dll'));
+    });
+  });
+
+  group('binariesMatch', () {
+    test('same bytes match, different bytes do not', () async {
+      final dir = await Directory.systemTemp.createTemp('astral-hash-');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final a = File(p.join(dir.path, 'a.bin'));
+      final b = File(p.join(dir.path, 'b.bin'));
+      final c = File(p.join(dir.path, 'c.bin'));
+      await a.writeAsBytes(const [1, 2, 3, 4, 5]);
+      await b.writeAsBytes(const [1, 2, 3, 4, 5]);
+      await c.writeAsBytes(const [1, 2, 3, 4, 6]);
+      final host = CoreHost();
+      expect(await host.binariesMatch(a.path, b.path), isTrue);
+      expect(await host.binariesMatch(a.path, c.path), isFalse);
+      expect(
+        await CoreHost.sha256File(a.path),
+        await CoreHost.sha256File(b.path),
+      );
     });
   });
 }

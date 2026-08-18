@@ -1,25 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
 import 'package:astral/data/kernel/core_rpc_client.dart';
 import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_mode.dart';
-import 'package:astral/data/services/app_settings_service.dart';
 import 'package:astral/data/services/log_service.dart';
 import 'package:astral_rust_core/astral_rust_core.dart'
     show KVNetworkStatus, KVNodeInfo;
 
 class ServiceKernelEngine implements KernelEngine {
-  ServiceKernelEngine({
-    required CoreHost host,
-    required AppSettingsService settings,
-    required LogService log,
-  }) : _host = host,
-       _settings = settings,
-       _log = log;
+  ServiceKernelEngine({required CoreHost host, required LogService log})
+    : _host = host,
+      _log = log;
 
   final CoreHost _host;
-  final AppSettingsService _settings;
   final LogService _log;
 
   CoreRpcClient? _client;
@@ -64,14 +59,14 @@ class ServiceKernelEngine implements KernelEngine {
 
   Future<void> _ensureReadyBody() async {
     await _host.ensureRuntimeSidecars(
-      nearProgram: await _host.findBinary(_settings.getCoreBinaryPath()),
+      nearProgram: await _host.findBinary(null),
     );
 
     if (_client != null) {
       try {
         if (await _ping()) {
           _connected = true;
-          _statusMessage = '已连接 ${_settings.getCoreTarget()}';
+          _statusMessage = '已连接 ${CoreHost.defaultListen}';
           return;
         }
       } catch (_) {}
@@ -93,7 +88,7 @@ class ServiceKernelEngine implements KernelEngine {
       }
     }
 
-    final binary = await _host.findBinary(_settings.getCoreBinaryPath());
+    final binary = await _host.findBinary(null);
     if (binary == null) {
       _connected = false;
       _statusMessage = '未找到 astral-core，正在等待自动下载安装';
@@ -122,17 +117,15 @@ class ServiceKernelEngine implements KernelEngine {
 
     _connected = false;
     _statusMessage = CoreHost.looksLikeProtocolMismatch(lastError ?? '')
-        ? '本机内核协议过旧，无法连接 ${_settings.getCoreTarget()}。请更新 astral-core 服务'
-        : '无法连接到 ${_settings.getCoreTarget()}';
+        ? '本机内核协议过旧，无法连接 ${CoreHost.defaultListen}。请更新 astral-core 服务'
+        : '无法连接到 ${CoreHost.defaultListen}';
     _log.warn(_module, _statusMessage!);
   }
 
   /// 已安装则 `service start`；未安装才临时拉起，避免双开。
   /// 返回是否在这次调用里新拉起了进程（需要稍等 JSON-RPC 就绪）。
   Future<bool> _ensureProcess(String binary) async {
-    final installState = await _host.queryInstallState(
-      configured: _settings.getCoreBinaryPath(),
-    );
+    final installState = await _host.queryInstallState();
     switch (installState) {
       case CoreInstallState.running:
         _log.info(_module, '内核服务已在运行');
@@ -156,18 +149,18 @@ class ServiceKernelEngine implements KernelEngine {
           _log.warn(_module, '启动服务失败: ${started.output}');
           return false;
         }
-        await _host.stopDetachedListener(_settings.getCoreTarget());
+        await _host.stopDetachedListener(CoreHost.defaultListen);
         await _host.spawnDetached(
           binary: binary,
-          listen: _settings.getCoreTarget(),
+          listen: CoreHost.defaultListen,
         );
         _log.info(_module, '服务未安装，已临时拉起: $binary');
         return true;
       case CoreInstallState.notInstalled:
-        await _host.stopDetachedListener(_settings.getCoreTarget());
+        await _host.stopDetachedListener(CoreHost.defaultListen);
         await _host.spawnDetached(
           binary: binary,
-          listen: _settings.getCoreTarget(),
+          listen: CoreHost.defaultListen,
         );
         _log.info(_module, '未安装系统服务，已临时拉起: $binary');
         return true;
@@ -184,15 +177,19 @@ class ServiceKernelEngine implements KernelEngine {
   }
 
   Future<bool> _tryUpgradeMismatchedService() async {
-    final upgrade = await _host.findUpgradeBinary(
-      _settings.getCoreBinaryPath(),
-    );
+    final upgrade = await _host.materializeBundledProgram();
     if (upgrade == null) {
-      _log.warn(_module, '本机内核协议不匹配，且未找到更新的 astral-core');
+      _log.warn(_module, '本机内核协议不匹配，且未找到随软件携带的 astral-core');
       return false;
     }
-    _log.info(_module, '协议不匹配，正在用新内核更新服务: $upgrade');
-    _statusMessage = '正在更新内核服务以匹配 JSON-RPC 协议';
+    final current = _host.currentProgramPath();
+    if (File(current).existsSync() &&
+        await _host.binariesMatch(upgrade, current)) {
+      _log.warn(_module, '携带内核与已安装文件相同，无法用复制修复协议不匹配');
+      return false;
+    }
+    _log.info(_module, '协议不匹配，正在用携带的内核更新服务: $upgrade');
+    _statusMessage = '正在用软件携带的内核更新服务';
     final result = await _host.updateService(
       newProgram: upgrade,
       binary: upgrade,
@@ -210,14 +207,14 @@ class ServiceKernelEngine implements KernelEngine {
     await _closeClient();
     _lastConnectError = null;
     final client = CoreRpcClient(
-      target: _settings.getCoreTarget(),
+      target: CoreHost.defaultListen,
       timeout: const Duration(seconds: 30),
     );
     try {
       if (await _ping(client)) {
         _client = client;
         _connected = true;
-        _statusMessage = '已连接 ${_settings.getCoreTarget()}';
+        _statusMessage = '已连接 ${CoreHost.defaultListen}';
         _log.info(_module, _statusMessage!);
         return true;
       }
@@ -324,10 +321,7 @@ class ServiceKernelEngine implements KernelEngine {
         ),
       );
     }
-    return KVNetworkStatus(
-      totalNodes: BigInt.from(peers.length),
-      nodes: peers,
-    );
+    return KVNetworkStatus(totalNodes: BigInt.from(peers.length), nodes: peers);
   }
 
   @override
