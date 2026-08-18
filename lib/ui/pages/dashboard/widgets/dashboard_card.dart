@@ -5,6 +5,7 @@ class _DashboardCard extends StatefulWidget {
   final String subtitle;
   final Widget child;
   final Widget? trailing;
+  final VoidCallback? onTitleTap;
   final EdgeInsetsGeometry contentPadding;
 
   const _DashboardCard({
@@ -12,6 +13,7 @@ class _DashboardCard extends StatefulWidget {
     required this.subtitle,
     required this.child,
     this.trailing,
+    this.onTitleTap,
     this.contentPadding = const EdgeInsets.fromLTRB(18, 0, 18, 18),
   });
 
@@ -53,28 +55,12 @@ class _DashboardCardState extends State<_DashboardCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.title,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          if (widget.subtitle.trim().isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              widget.subtitle,
-                              style: TextStyle(
-                                color: palette.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ],
+                      child: _DashboardCardTitle(
+                        title: widget.title,
+                        subtitle: widget.subtitle,
+                        onTap: widget.onTitleTap,
+                        titleColor: palette.textPrimary,
+                        subtitleColor: palette.textSecondary,
                       ),
                     ),
                     if (widget.trailing != null) widget.trailing!,
@@ -92,6 +78,67 @@ class _DashboardCardState extends State<_DashboardCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _DashboardCardTitle extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  final Color titleColor;
+  final Color subtitleColor;
+
+  const _DashboardCardTitle({
+    required this.title,
+    required this.subtitle,
+    required this.titleColor,
+    required this.subtitleColor,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: titleColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: 2),
+              Icon(Icons.chevron_right, size: 18, color: subtitleColor),
+            ],
+          ],
+        ),
+        if (subtitle.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: subtitleColor, fontSize: 12),
+          ),
+        ],
+      ],
+    );
+
+    if (onTap == null) return column;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: column,
     );
   }
 }

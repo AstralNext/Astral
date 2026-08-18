@@ -4,6 +4,16 @@ import 'package:astral/data/models/instance_toml_config.dart';
 class TomlConfigService {
   String defaultToml() => InstanceTomlConfig.defaults().toToml();
 
+  /// 顶层 `instance_id = "..."`。
+  String? readInstanceId(String input) {
+    final match = RegExp(
+      r'''^\s*(?!#)instance_id\s*=\s*"([^"\n]*)"''',
+      multiLine: true,
+    ).firstMatch(input);
+    final value = match?.group(1)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
   /// 顶层 `ipv4 = "x.x.x.x/n"`（Android VpnService 用）。
   String? readIpv4(String input) {
     try {

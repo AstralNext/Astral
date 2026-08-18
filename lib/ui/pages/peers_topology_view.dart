@@ -57,8 +57,9 @@ class _PeersTopologyViewState extends State<PeersTopologyView> {
   }
 
   NodeFlowController<_PeerNodeData, dynamic> _buildController(
-    List<KVNodeInfo> peers,
+    List<KVNodeInfo> rawPeers,
   ) {
+    final peers = rawPeers.where((n) => !isLocalPeer(n)).toList();
     const center = Offset(420, 320);
     const radius = 220.0;
     const localId = 'local';

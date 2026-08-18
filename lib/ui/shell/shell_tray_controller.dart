@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:astral/di.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:tray_manager/tray_manager.dart';
@@ -48,11 +48,15 @@ class ShellTrayController {
     await windowManager.focus();
   }
 
-  /// 先等内核/VPN 停干净，再关窗。
+  /// 立刻关界面并强制结束进程，不等内核停机。
   Future<void> exitApp() async {
-    await disposeDI();
-    await windowManager.setPreventClose(false);
-    await windowManager.destroy();
+    try {
+      await Future.wait<void>([
+        windowManager.hide(),
+        _tray.destroy(),
+      ]).timeout(const Duration(milliseconds: 150));
+    } catch (_) {}
+    exit(0);
   }
 
   Future<String> _ensureTrayIconFile({
@@ -72,12 +76,14 @@ class ShellTrayController {
     }
 
     try {
-      final ext =
-          preferredAssetPath.toLowerCase().endsWith('.ico') ? '.ico' : '.png';
+      final ext = preferredAssetPath.toLowerCase().endsWith('.ico')
+          ? '.ico'
+          : '.png';
       return await writeAsset(preferredAssetPath, ext);
     } catch (_) {
-      final ext =
-          fallbackAssetPath.toLowerCase().endsWith('.ico') ? '.ico' : '.png';
+      final ext = fallbackAssetPath.toLowerCase().endsWith('.ico')
+          ? '.ico'
+          : '.png';
       return await writeAsset(fallbackAssetPath, ext);
     }
   }

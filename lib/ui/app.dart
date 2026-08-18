@@ -29,7 +29,7 @@ class _AstralAppState extends State<AstralApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // 桌面退出由 ShellTrayController.exitApp await disposeDI，避免此处抢跑。
+    // 桌面退出走 exit(0)，不在此处停内核。
     if (!_isDesktop) {
       unawaited(disposeDI());
     }
@@ -57,9 +57,8 @@ class _AstralAppState extends State<AstralApp> with WidgetsBindingObserver {
         theme: theme,
         themeAnimationDuration: AppThemeAnimation.duration,
         themeAnimationCurve: AppThemeAnimation.curve,
-        builder: (context, child) => ThemeWaterDropHost(
-          child: child ?? const SizedBox.shrink(),
-        ),
+        builder: (context, child) =>
+            ThemeWaterDropHost(child: child ?? const SizedBox.shrink()),
         home: const Shell(),
       );
     });

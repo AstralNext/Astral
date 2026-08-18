@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:astral/config/app_dimensions.dart';
 import 'package:astral/config/theme.dart';
+import 'package:astral/data/kernel/core_service_controller.dart';
+import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/services/update_service.dart';
 import 'package:astral/data/state/settings_state.dart';
 import 'package:astral/data/state/update_state.dart';
@@ -78,16 +80,16 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      unawaited(_bootstrapDesktopKernel());
       final updateState = getIt<UpdateState>();
       if (updateState.autoCheckUpdate.value) {
         Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            getIt<UpdateService>().checkForUpdates(
-              context,
-              showNoUpdateMessage: false,
-              showFailureMessage: false,
-            );
-          }
+          if (!mounted) return;
+          getIt<UpdateService>().checkForUpdates(
+            context,
+            showNoUpdateMessage: false,
+            showFailureMessage: false,
+          );
         });
       }
     });
@@ -108,6 +110,24 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
 
   bool get _isDesktopPlatform =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  Future<void> _bootstrapDesktopKernel() async {
+    if (!getIt.isRegistered<CoreServiceController>()) return;
+    try {
+      await getIt<CoreServiceController>().ensureProvisioned();
+    } catch (_) {}
+    if (getIt.isRegistered<KernelEngine>()) {
+      try {
+        await getIt<KernelEngine>().ensureReady();
+      } catch (_) {}
+    }
+    await syncRunningInstances();
+    if (getIt<UpdateState>().autoCheckUpdate.value) {
+      try {
+        await getIt<CoreServiceController>().checkUpdate(applyIfNewer: true);
+      } catch (_) {}
+    }
+  }
 
   Future<void> _setupDesktopCloseBehavior() async {
     if (!_isDesktopPlatform) return;
@@ -167,7 +187,8 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
   /// 切到其它 Tab 只停指标采样，存活探测仍继续。
   void _syncNetworkPolling() {
     if (!getIt.isRegistered<InstanceRuntimeStore>()) return;
-    final need = _navController.selectedIndex <= ShellTab.instances ||
+    final need =
+        _navController.selectedIndex <= ShellTab.instances ||
         _contentController.hasOverlay;
     getIt<InstanceRuntimeStore>().setPollingEnabled(need, forcePoll: need);
   }
@@ -201,10 +222,7 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
 
     if (!isCompact) return stack;
 
-    return SafeArea(
-      bottom: false,
-      child: stack,
-    );
+    return SafeArea(bottom: false, child: stack);
   }
 
   @override

@@ -66,7 +66,10 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
 
     return Watch((context) {
       final status = _runtimeStore.networkStatusByPath.value[widget.instancePath];
-      final nodes = status?.nodes ?? [];
+      var nodes = [...?status?.nodes];
+      if (nodes.isEmpty && _runtimeStore.isRunning(widget.instancePath)) {
+        nodes = [localPeerPlaceholder(hostname: widget.instanceName)];
+      }
 
       if (nodes.isEmpty) {
         return Center(
@@ -158,7 +161,7 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
             child: _viewMode == _ViewMode.list
                 ? _buildGridView(context, nodes)
                 : PeersTopologyView(
-                    nodes: nodes,
+                    nodes: nodes.where((n) => !isLocalPeer(n)).toList(),
                     localLabel: widget.instanceName,
                   ),
           ),
@@ -197,9 +200,11 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
 
   Widget _buildNodeCard(BuildContext context, KVNodeInfo node) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isConnected = node.latencyMs > 0;
+    final isLocal = isLocalPeer(node);
+    final isConnected = isLocal || node.latencyMs > 0;
     final isDirect = _isDirectConnection(node);
     final viaNode = _getViaNode(node);
+    final badge = isLocal ? '本机' : (isDirect ? '直连' : '中转');
 
     return Card(
       margin: EdgeInsets.zero,
@@ -220,7 +225,9 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
                   width: 7,
                   height: 7,
                   decoration: BoxDecoration(
-                    color: isConnected
+                    color: isLocal
+                        ? colorScheme.primary
+                        : isConnected
                         ? (isDirect ? colorScheme.primary : Colors.orange)
                         : colorScheme.outline,
                     shape: BoxShape.circle,
@@ -242,15 +249,15 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                   decoration: BoxDecoration(
-                    color: isDirect
+                    color: isLocal || isDirect
                         ? colorScheme.primaryContainer.withValues(alpha: 0.5)
                         : Colors.orange.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    isDirect ? '直连' : '中转',
+                    badge,
                     style: TextStyle(
-                      color: isDirect
+                      color: isLocal || isDirect
                           ? colorScheme.onPrimaryContainer
                           : Colors.orange.shade800,
                       fontSize: 9,
@@ -307,7 +314,9 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
                 _buildInfoChip(
                   context,
                   icon: Icons.timer_outlined,
-                  value: '${node.latencyMs.toStringAsFixed(1)}ms',
+                  value: isLocal
+                      ? '—'
+                      : '${node.latencyMs.toStringAsFixed(1)}ms',
                 ),
                 _buildInfoChip(
                   context,

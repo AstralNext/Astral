@@ -1,8 +1,8 @@
 import 'dart:async';
 
+import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/services/log_service.dart';
 import 'package:astral_rust_core/astral_rust_core.dart' show KVNetworkStatus;
-import 'package:astral_rust_core/p2p_service.dart';
 import 'package:get_it/get_it.dart';
 import 'package:signals/signals_core.dart';
 
@@ -87,11 +87,12 @@ class InstanceRuntimeStore {
   static const _historyLen = 60;
   static const _metricsInterval = Duration(seconds: 2);
   static const _aliveOnlyInterval = Duration(seconds: 8);
+
   /// 连续失败达到此次数时打 warn；不据此判定实例死亡。
   static const _degradedWarnEvery = 3;
 
   final _logService = GetIt.I<LogService>();
-  P2PService get _p2p => GetIt.I<P2PService>();
+  KernelEngine get _engine => GetIt.I<KernelEngine>();
   final version = Signal<String>("");
 
   final instanceIdByPath = Signal<Map<String, String>>({});
@@ -157,18 +158,30 @@ class InstanceRuntimeStore {
   bool _metricsEnabled = true;
 
   StreamSubscription? _coreLogSubscription;
+  Timer? _coreLogResubscribeTimer;
 
   InstanceRuntimeStore() {
-    if (!GetIt.I.isRegistered<P2PService>()) return;
-    final p2p = GetIt.I<P2PService>();
-    unawaited(
-      p2p.easytierVersion().then((v) {
-        version.value = v;
-      }).catchError((Object e) {
-        _logService.warn('P2P', 'easytierVersion failed: $e');
-      }),
-    );
-    _startCoreLogListener(p2p);
+    if (!GetIt.I.isRegistered<KernelEngine>()) return;
+    final engine = GetIt.I<KernelEngine>();
+    if (engine.connected) unawaited(attachKernel());
+  }
+
+  /// 内核连上后再拉版本、订日志，避免启动瞬间刷「未连接」。
+  Future<void> attachKernel() async {
+    if (!GetIt.I.isRegistered<KernelEngine>()) return;
+    final engine = GetIt.I<KernelEngine>();
+    if (!engine.connected) return;
+    try {
+      final v = await engine.easytierVersion();
+      if (v.trim().isNotEmpty) version.value = v;
+    } catch (e) {
+      _logService.warn('P2P', 'easytierVersion failed: $e');
+    }
+    _coreLogResubscribeTimer?.cancel();
+    _coreLogResubscribeTimer = null;
+    await _coreLogSubscription?.cancel();
+    _coreLogSubscription = null;
+    _startCoreLogListener(engine);
   }
 
   /// [enabled] 控制指标采样；存活监控在有运行实例时始终开启。
@@ -185,9 +198,9 @@ class InstanceRuntimeStore {
     }
   }
 
-  void _startCoreLogListener(P2PService p2p) {
+  void _startCoreLogListener(KernelEngine engine) {
     try {
-      _coreLogSubscription = p2p.subscribeCoreLogs().listen(
+      _coreLogSubscription = engine.subscribeCoreLogs().listen(
         (event) {
           final instanceId = event.instanceId;
           final message = event.message;
@@ -198,12 +211,34 @@ class InstanceRuntimeStore {
           _logService.info('P2P', message, instancePath: instancePath);
         },
         onError: (Object e) {
+          final text = e.toString();
+          if (text.contains('UNIMPLEMENTED') ||
+              text.contains('尚未实现') ||
+              text.contains('CANCELLED')) {
+            return;
+          }
+          if (text.contains('DEADLINE_EXCEEDED') ||
+              text.contains('UNAVAILABLE')) {
+            _scheduleCoreLogResubscribe(engine);
+            return;
+          }
           _logService.warn('P2P', '日志流错误: $e');
+          _scheduleCoreLogResubscribe(engine);
         },
       );
     } catch (e) {
       _logService.warn('P2P', '无法订阅内核日志: $e');
     }
+  }
+
+  void _scheduleCoreLogResubscribe(KernelEngine engine) {
+    if (_coreLogResubscribeTimer?.isActive ?? false) return;
+    _coreLogResubscribeTimer = Timer(const Duration(seconds: 1), () {
+      if (!engine.connected) return;
+      unawaited(_coreLogSubscription?.cancel());
+      _coreLogSubscription = null;
+      _startCoreLogListener(engine);
+    });
   }
 
   void setStarting(String path, bool starting) {
@@ -291,8 +326,7 @@ class InstanceRuntimeStore {
   void _ensureSharedTimer() {
     if (_sharedPollTimer != null) return;
     if (instanceIdByPath.value.isEmpty) return;
-    final interval =
-        _metricsEnabled ? _metricsInterval : _aliveOnlyInterval;
+    final interval = _metricsEnabled ? _metricsInterval : _aliveOnlyInterval;
     _sharedPollTimer = Timer.periodic(interval, (_) {
       unawaited(_pollAll());
     });
@@ -358,7 +392,7 @@ class InstanceRuntimeStore {
 
     // 存活探测：仅 isRunning==false 才自然退出；探测失败只 degraded。
     try {
-      final stillUp = await _p2p.isEasytierRunning(instanceId);
+      final stillUp = await _engine.isRunning(instanceId);
       if (!_stillMapped(path, instanceId)) return;
       if (!stillUp) {
         await _markNaturalExit(path, instanceId);
@@ -373,7 +407,7 @@ class InstanceRuntimeStore {
     if (!_metricsEnabled) return;
 
     try {
-      final status = await _p2p.getNetworkStatus(instanceId);
+      final status = await _engine.getNetworkStatus(instanceId);
       if (!_stillMapped(path, instanceId)) return;
 
       _pollFailures[path] = 0;
@@ -404,8 +438,14 @@ class InstanceRuntimeStore {
       var rxRate = 0.0;
       var txRate = 0.0;
       if (elapsed > 0) {
-        rxRate = ((totalRx - lastRx) / elapsed * 1000).clamp(0, double.infinity);
-        txRate = ((totalTx - lastTx) / elapsed * 1000).clamp(0, double.infinity);
+        rxRate = ((totalRx - lastRx) / elapsed * 1000).clamp(
+          0,
+          double.infinity,
+        );
+        txRate = ((totalTx - lastTx) / elapsed * 1000).clamp(
+          0,
+          double.infinity,
+        );
       }
 
       if (!_stillMapped(path, instanceId)) return;
@@ -430,8 +470,9 @@ class InstanceRuntimeStore {
 
       batch(() {
         if (!_stillMapped(path, instanceId)) return;
-        final statusMap =
-            Map<String, KVNetworkStatus>.from(networkStatusByPath.value);
+        final statusMap = Map<String, KVNetworkStatus>.from(
+          networkStatusByPath.value,
+        );
         statusMap[path] = status;
         networkStatusByPath.value = statusMap;
 
@@ -451,8 +492,9 @@ class InstanceRuntimeStore {
       map.remove(path);
       trafficByPath.value = map;
 
-      final statusMap =
-          Map<String, KVNetworkStatus>.from(networkStatusByPath.value);
+      final statusMap = Map<String, KVNetworkStatus>.from(
+        networkStatusByPath.value,
+      );
       statusMap.remove(path);
       networkStatusByPath.value = statusMap;
     });
@@ -461,6 +503,8 @@ class InstanceRuntimeStore {
   void dispose() {
     _sharedPollTimer?.cancel();
     _sharedPollTimer = null;
+    _coreLogResubscribeTimer?.cancel();
+    _coreLogResubscribeTimer = null;
     _coreLogSubscription?.cancel();
     _coreLogSubscription = null;
     onNaturalExit = null;

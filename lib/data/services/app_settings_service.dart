@@ -7,6 +7,11 @@ class AppSettingsService {
   static const String _keyLaunchAtStartup = 'launch_at_startup';
   static const String _keyAutoCheckUpdate = 'auto_check_update';
   static const String _keyUpdateBetaChannel = 'update_beta_channel';
+  static const String _keyCoreTarget = 'core_target';
+  static const String _keyCoreBinaryPath = 'core_binary_path';
+  static const String _keyCoreServiceOptOut = 'core_service_opt_out';
+
+  static const String defaultCoreTarget = '127.0.0.1:50051';
 
   final SharedPreferences _prefs;
 
@@ -33,9 +38,25 @@ class AppSettingsService {
   Future<void> setAutoCheckUpdate(bool value) async =>
       await _prefs.setBool(_keyAutoCheckUpdate, value);
 
-  bool getUpdateBetaChannel() =>
-      _prefs.getBool(_keyUpdateBetaChannel) ?? false;
+  bool getUpdateBetaChannel() => _prefs.getBool(_keyUpdateBetaChannel) ?? false;
 
   Future<void> setUpdateBetaChannel(bool value) async =>
       await _prefs.setBool(_keyUpdateBetaChannel, value);
+
+  String getCoreTarget() =>
+      _prefs.getString(_keyCoreTarget) ?? defaultCoreTarget;
+
+  Future<void> setCoreTarget(String value) async =>
+      await _prefs.setString(_keyCoreTarget, value);
+
+  String getCoreBinaryPath() => _prefs.getString(_keyCoreBinaryPath) ?? '';
+
+  Future<void> setCoreBinaryPath(String value) async =>
+      await _prefs.setString(_keyCoreBinaryPath, value);
+
+  /// 用户在设置里卸载服务后为 true，避免下次启动再自动安装。
+  bool getCoreServiceOptOut() => _prefs.getBool(_keyCoreServiceOptOut) ?? false;
+
+  Future<void> setCoreServiceOptOut(bool value) async =>
+      await _prefs.setBool(_keyCoreServiceOptOut, value);
 }

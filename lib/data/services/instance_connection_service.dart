@@ -1,27 +1,23 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/services/instance_catalog_service.dart';
 import 'package:astral/data/services/log_service.dart';
 import 'package:astral/data/services/toml_config_service.dart';
 import 'package:astral/data/services/vpn_manager.dart';
 import 'package:astral/data/state/instance_runtime_store.dart';
-import 'package:astral_rust_core/p2p_service.dart';
 import 'package:get_it/get_it.dart';
 
 /// 实例启停：全局串行；Android 同时只跑一个实例。
 class InstanceConnectionService {
-  InstanceConnectionService(
-    this._toml,
-    this._runtimeStore,
-    this._log,
-  );
+  InstanceConnectionService(this._toml, this._runtimeStore, this._log);
 
   final TomlConfigService _toml;
   final InstanceRuntimeStore _runtimeStore;
   final LogService _log;
 
-  P2PService get _p2p => GetIt.I<P2PService>();
+  KernelEngine get _engine => GetIt.I<KernelEngine>();
 
   Future<void> _queue = Future<void>.value();
   var _vpnEpoch = 0;
@@ -100,13 +96,9 @@ class InstanceConnectionService {
       _vpnEpoch++;
       await _vpn?.stop(instanceId: instanceId);
       try {
-        await _p2p.closeInstance(instanceId);
+        await _engine.closeInstance(instanceId);
       } catch (e) {
-        _log.warn(
-          _module,
-          '自然退出清理失败: $e',
-          instancePath: path,
-        );
+        _log.warn(_module, '自然退出清理失败: $e', instancePath: path);
       }
       _log.info(_module, '实例已退出: $path', instancePath: path);
     });
@@ -116,17 +108,13 @@ class InstanceConnectionService {
   Future<void> handleVpnRevokedBySystem(String instanceId) {
     return _enqueue(() async {
       final path = _runtimeStore.pathByInstanceId.value[instanceId];
-      _log.warn(
-        _module,
-        '系统撤销 VPN，停止实例',
-        instancePath: path,
-      );
+      _log.warn(_module, '系统撤销 VPN，停止实例', instancePath: path);
       if (path != null) {
         await _stop(path: path);
       } else {
         _vpnEpoch++;
         try {
-          await _p2p.closeInstance(instanceId);
+          await _engine.closeInstance(instanceId);
         } catch (e) {
           _log.warn(_module, '撤销 VPN 后清理失败: $e');
         }
@@ -144,14 +132,11 @@ class InstanceConnectionService {
       return false;
     }
     if (Platform.isAndroid) {
-      final busy = _runtimeStore.instanceIdByPath.value.isNotEmpty ||
+      final busy =
+          _runtimeStore.instanceIdByPath.value.isNotEmpty ||
           _runtimeStore.startingPaths.value.any((p) => p != path);
       if (busy) {
-        _log.error(
-          _module,
-          '请先停止其它实例（本机同时只跑一个）',
-          instancePath: path,
-        );
+        _log.error(_module, '请先停止其它实例（本机同时只跑一个）', instancePath: path);
         return false;
       }
     }
@@ -165,7 +150,7 @@ class InstanceConnectionService {
         return false;
       }
 
-      final id = await _launch(path, configToml);
+      final id = await _launch(path, configToml, name);
       if (id == null) return false;
 
       _runtimeStore.setRunning(path, id);
@@ -184,11 +169,7 @@ class InstanceConnectionService {
         }
       } else if (Platform.isIOS) {
         _lastStartNote = '已启动（本平台未挂系统 VPN）';
-        _log.warn(
-          _module,
-          'iOS 无系统 VPN/TUN',
-          instancePath: path,
-        );
+        _log.warn(_module, 'iOS 无系统 VPN/TUN', instancePath: path);
       }
       return true;
     } catch (e) {
@@ -199,19 +180,32 @@ class InstanceConnectionService {
     }
   }
 
-  Future<String?> _launch(String path, String configToml) async {
+  Future<String?> _launch(String path, String configToml, String? name) async {
     String? id;
     var ok = false;
     try {
-      id = await _p2p.createInstance(
+      id = await _engine.createInstance(
         configToml: configToml,
-        watchEvent: true,
+        sourcePath: path,
+        name: name,
       );
       _runtimeStore.bindInstanceLogRoute(path, id);
 
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(Duration(milliseconds: i == 0 ? 400 : 300));
-        if (await _p2p.isEasytierRunning(id)) {
+      final deadline = DateTime.now().add(const Duration(seconds: 45));
+      var delayMs = 400;
+      while (DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+        delayMs = 300;
+        final probe = await _engine.inspectInstance(id);
+        if (probe.failed) {
+          _log.error(
+            _module,
+            '启动失败: ${probe.errorMessage}',
+            instancePath: path,
+          );
+          return null;
+        }
+        if (probe.running) {
           ok = true;
           return id;
         }
@@ -221,7 +215,7 @@ class InstanceConnectionService {
     } finally {
       if (id != null && !ok) {
         try {
-          await _p2p.closeInstance(id);
+          await _engine.closeInstance(id);
         } catch (_) {}
         _runtimeStore.unbindInstanceLogRoute(id);
       }
@@ -235,7 +229,7 @@ class InstanceConnectionService {
       await _vpn?.stop(instanceId: id);
       if (id != null) {
         try {
-          await _p2p.closeInstance(id);
+          await _engine.closeInstance(id);
         } catch (e) {
           _log.warn(_module, 'closeInstance: $e', instancePath: path);
         }

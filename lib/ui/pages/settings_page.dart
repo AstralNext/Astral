@@ -8,6 +8,7 @@ import 'package:astral/data/state/theme_reveal_state.dart';
 import 'package:astral/data/state/update_state.dart';
 import 'package:astral/di.dart';
 import 'package:astral/ui/pages/settings/about_page.dart';
+import 'package:astral/ui/pages/settings/kernel_settings_section.dart';
 import 'package:astral/ui/pages/settings/storage_settings_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/widgets/astral_settings_section.dart';
@@ -20,14 +21,8 @@ import 'package:signals/signals_flutter.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
-  void _openSubpage({
-    required Widget page,
-    required String title,
-  }) {
-    getIt<ShellContentController>().showOverlay(
-      content: page,
-      title: title,
-    );
+  void _openSubpage({required Widget page, required String title}) {
+    getIt<ShellContentController>().showOverlay(content: page, title: title);
   }
 
   @override
@@ -68,7 +63,7 @@ class SettingsPage extends StatelessWidget {
                   return SwitchListTile(
                     secondary: const Icon(Icons.doorbell_outlined),
                     title: const Text('关闭时最小化到托盘'),
-                    subtitle: const Text('隐藏到托盘；退出应用后本机实例会停止'),
+                    subtitle: const Text('隐藏到托盘；退出客户端后内核继续运行'),
                     value: settingsState.closeMinimize.value,
                     onChanged: (v) {
                       settingsState.closeMinimize.value = v;
@@ -93,6 +88,8 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppDimensions.sectionGap),
+          const KernelSettingsSection(),
+          const SizedBox(height: AppDimensions.sectionGap),
         ],
 
         AstralSettingsSection(
@@ -103,7 +100,7 @@ class SettingsPage extends StatelessWidget {
                 return SwitchListTile(
                   secondary: const Icon(Icons.system_update_alt),
                   title: const Text('自动检查更新'),
-                  subtitle: const Text('启动时检查是否有新版本'),
+                  subtitle: const Text('启动时检查客户端与内核更新并自动安装内核'),
                   value: updateState.autoCheckUpdate.value,
                   onChanged: updateState.setAutoCheckUpdate,
                 );
@@ -146,10 +143,7 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.info_outline_rounded,
               label: '关于 Astral',
               subtitle: '版本与更新',
-              onTap: () => _openSubpage(
-                page: const AboutPage(),
-                title: '关于',
-              ),
+              onTap: () => _openSubpage(page: const AboutPage(), title: '关于'),
             ),
           ],
         ),
@@ -162,10 +156,7 @@ class SettingsPage extends StatelessWidget {
     SettingsState settingsState,
     AppThemeId currentId,
   ) async {
-    final picked = await showAppThemePickerSheet(
-      context,
-      current: currentId,
-    );
+    final picked = await showAppThemePickerSheet(context, current: currentId);
     if (picked == null || picked.themeId == currentId) return;
 
     await Future<void>.delayed(const Duration(milliseconds: 60));

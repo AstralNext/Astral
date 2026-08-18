@@ -12,11 +12,13 @@ import 'package:astral/data/state/update_state.dart';
 import 'package:astral/di.dart';
 import 'package:astral/data/state/instance_runtime_store.dart';
 import 'package:astral/ui/pages/dashboard/models/dashboard_layout.dart';
+import 'package:astral/ui/pages/instance_peers_helpers.dart';
+import 'package:astral/ui/pages/instance_peers_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/shell/shell_navigation_controller.dart';
 import 'package:astral/ui/widgets/dashboard_grid.dart';
 import 'package:astral/utils/formatters.dart';
-import 'package:astral_rust_core/p2p_service.dart';
+import 'package:astral_rust_core/astral_rust_core.dart' show KVNodeInfo;
 import 'package:flutter/material.dart';
 import 'package:signals/signals_flutter.dart';
 
@@ -31,6 +33,7 @@ part 'dashboard/cards/logs_summary_card.dart';
 part 'dashboard/cards/shortcuts_card.dart';
 part 'dashboard/cards/update_card.dart';
 part 'dashboard/cards/core_card.dart';
+part 'dashboard/cards/peer_info_card.dart';
 part 'dashboard/widgets/dashboard_card.dart';
 part 'dashboard/widgets/page_header.dart';
 
@@ -74,9 +77,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _saveLayoutOrder(List<String> orderedIds) async {
     final base = _layout ?? DashboardLayout.defaultLayout;
     final byId = {for (final w in base.widgets) w.id: w};
-    final defaults = {
-      for (final w in DashboardLayout.catalog) w.id: w,
-    };
+    final defaults = {for (final w in DashboardLayout.catalog) w.id: w};
     final newWidgets = <DashboardWidgetConfig>[];
     for (var i = 0; i < orderedIds.length; i++) {
       final id = orderedIds[i];
@@ -112,14 +113,20 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _addCard(String id) async {
+  Future<void> _addCard(String type) async {
     final base = _layout ?? DashboardLayout.defaultLayout;
-    if (base.widgets.any((w) => w.id == id)) return;
-    final entry = DashboardLayout.catalogEntry(id);
+    if (!DashboardLayout.allowsMultiple(type) &&
+        base.widgets.any((w) => w.catalogType == type)) {
+      return;
+    }
+    final entry = DashboardLayout.catalogEntry(type);
     if (entry == null) return;
+    final slotId = DashboardLayout.allowsMultiple(type)
+        ? DashboardLayout.newSlotId(type)
+        : type;
     final newWidgets = [
       ...base.widgets,
-      entry.copyWith(order: base.widgets.length),
+      entry.copyWith(id: slotId, type: type, order: base.widgets.length),
     ];
     final newLayout = DashboardLayout.normalize(
       base.copyWith(widgets: newWidgets),
@@ -128,6 +135,117 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) {
       setState(() => _layout = newLayout);
     }
+    if (type == DashboardLayout.peerInfoType && mounted) {
+      await _pickAndBindInstance(slotId);
+    }
+  }
+
+  Future<void> _bindCardInstance(String slotId, String instancePath) async {
+    final base = _layout ?? DashboardLayout.defaultLayout;
+    final newWidgets = [
+      for (final w in base.widgets)
+        if (w.id == slotId) w.copyWith(instancePath: instancePath) else w,
+    ];
+    final newLayout = DashboardLayout.normalize(
+      base.copyWith(widgets: newWidgets),
+    );
+    await _layoutService.save(newLayout);
+    if (mounted) {
+      setState(() => _layout = newLayout);
+    }
+  }
+
+  String _instanceName(String path) {
+    for (final item in _cachedSnapshot?.items ?? const <InstanceCatalogItem>[]) {
+      if (item.path == path) return item.name;
+    }
+    return path.split(Platform.pathSeparator).last;
+  }
+
+  Future<void> _pickAndBindInstance(String slotId) async {
+    String? current;
+    for (final w in (_layout ?? DashboardLayout.defaultLayout).widgets) {
+      if (w.id == slotId) {
+        current = w.instancePath;
+        break;
+      }
+    }
+    final path = await _showInstancePicker(currentPath: current);
+    if (path == null) return;
+    await _bindCardInstance(slotId, path);
+  }
+
+  Future<String?> _showInstancePicker({String? currentPath}) async {
+    final items = _cachedSnapshot?.items ?? const <InstanceCatalogItem>[];
+    if (items.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('还没有实例，先去创建')),
+        );
+      }
+      return null;
+    }
+    if (!mounted) return null;
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                child: Text(
+                  '选择要绑定的实例',
+                  style: TextStyle(
+                    color: scheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              for (final item in items)
+                ListTile(
+                  leading: Icon(
+                    _runtimeStore.isRunning(item.path)
+                        ? Icons.play_circle_outline
+                        : Icons.stop_circle_outlined,
+                  ),
+                  title: Text(item.name),
+                  subtitle: Text(
+                    item.relativePath,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  selected: item.path == currentPath,
+                  trailing: item.path == currentPath
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: () => Navigator.of(context).pop(item.path),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _openPeersForCard(DashboardWidgetConfig config) {
+    final path = config.instancePath?.trim();
+    if (path == null || path.isEmpty) {
+      _pickAndBindInstance(config.id);
+      return;
+    }
+    final name = _instanceName(path);
+    getIt<ShellContentController>().showOverlay(
+      content: InstancePeersPage(
+        instancePath: path,
+        instanceName: name,
+      ),
+      title: '$name - 节点信息',
+    );
   }
 
   Future<void> _resetLayout() async {
@@ -139,12 +257,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   List<String> get _availableCardIds {
-    final present = {
-      for (final w in (_layout ?? DashboardLayout.defaultLayout).widgets) w.id,
+    final presentTypes = {
+      for (final w in (_layout ?? DashboardLayout.defaultLayout).widgets)
+        w.catalogType,
     };
     return [
-      for (final id in DashboardLayout.catalog.map((w) => w.id))
-        if (!present.contains(id)) id,
+      for (final w in DashboardLayout.catalog)
+        if (DashboardLayout.allowsMultiple(w.catalogType) ||
+            !presentTypes.contains(w.catalogType))
+          w.catalogType,
     ];
   }
 
@@ -176,6 +297,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 ListTile(
                   leading: const Icon(Icons.widgets_outlined),
                   title: Text(DashboardLayout.titleOf(id)),
+                  subtitle: DashboardLayout.allowsMultiple(id)
+                      ? const Text('可添加多张，每张绑定一个实例')
+                      : null,
                   onTap: () => Navigator.of(context).pop(id),
                 ),
             ],
@@ -195,75 +319,8 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  List<DashboardGridItem> _buildGridItems() {
-    final defaults = {
-      for (final w in DashboardLayout.catalog) w.id: w,
-    };
-
+  List<DashboardGridItem> _buildGridItems(List<InstanceCatalogItem> items) {
     void go(int tab) => getIt<ShellNavigationController>().navigateTo(tab);
-
-    final catalog = <String, DashboardGridItem>{
-      'traffic': DashboardGridItem(
-        id: 'traffic',
-        widthSpan: defaults['traffic']!.widthSpan,
-        heightSpan: defaults['traffic']!.heightSpan,
-        child: _TrafficCard(runtimeStore: _runtimeStore),
-      ),
-      'memory': DashboardGridItem(
-        id: 'memory',
-        widthSpan: defaults['memory']!.widthSpan,
-        heightSpan: defaults['memory']!.heightSpan,
-        child: const _MemoryCard(),
-      ),
-      'quality': DashboardGridItem(
-        id: 'quality',
-        widthSpan: defaults['quality']!.widthSpan,
-        heightSpan: defaults['quality']!.heightSpan,
-        child: _QualityCard(runtimeStore: _runtimeStore),
-      ),
-      'nodes': DashboardGridItem(
-        id: 'nodes',
-        widthSpan: defaults['nodes']!.widthSpan,
-        heightSpan: defaults['nodes']!.heightSpan,
-        child: _NodesPulseCard(runtimeStore: _runtimeStore),
-      ),
-      'duplex': DashboardGridItem(
-        id: 'duplex',
-        widthSpan: defaults['duplex']!.widthSpan,
-        heightSpan: defaults['duplex']!.heightSpan,
-        child: _DuplexCard(runtimeStore: _runtimeStore),
-      ),
-      'uptime': DashboardGridItem(
-        id: 'uptime',
-        widthSpan: defaults['uptime']!.widthSpan,
-        heightSpan: defaults['uptime']!.heightSpan,
-        child: _UptimeCard(runtimeStore: _runtimeStore),
-      ),
-      'logs': DashboardGridItem(
-        id: 'logs',
-        widthSpan: defaults['logs']!.widthSpan,
-        heightSpan: defaults['logs']!.heightSpan,
-        child: _LogsSummaryCard(onOpenInstances: () => go(ShellTab.instances)),
-      ),
-      'shortcuts': DashboardGridItem(
-        id: 'shortcuts',
-        widthSpan: defaults['shortcuts']!.widthSpan,
-        heightSpan: defaults['shortcuts']!.heightSpan,
-        child: _ShortcutsCard(onNavigate: go),
-      ),
-      'update': DashboardGridItem(
-        id: 'update',
-        widthSpan: defaults['update']!.widthSpan,
-        heightSpan: defaults['update']!.heightSpan,
-        child: const _UpdateCard(),
-      ),
-      'core': DashboardGridItem(
-        id: 'core',
-        widthSpan: defaults['core']!.widthSpan,
-        heightSpan: defaults['core']!.heightSpan,
-        child: const _CoreCard(),
-      ),
-    };
 
     final layout = DashboardLayout.normalize(
       _layout ?? DashboardLayout.defaultLayout,
@@ -273,14 +330,54 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return [
       for (final w in ordered)
-        if (catalog.containsKey(w.id))
+        if (DashboardLayout.catalogEntry(w.catalogType) != null)
           DashboardGridItem(
-            id: catalog[w.id]!.id,
+            id: w.id,
             widthSpan: w.widthSpan,
             heightSpan: w.heightSpan,
-            child: catalog[w.id]!.child,
+            child: _cardForWidget(w, items, go),
           ),
     ];
+  }
+
+  Widget _cardForWidget(
+    DashboardWidgetConfig w,
+    List<InstanceCatalogItem> items,
+    void Function(int tab) go,
+  ) {
+    switch (w.catalogType) {
+      case 'traffic':
+        return _TrafficCard(runtimeStore: _runtimeStore);
+      case 'memory':
+        return const _MemoryCard();
+      case 'quality':
+        return _QualityCard(runtimeStore: _runtimeStore);
+      case 'nodes':
+        return _NodesPulseCard(runtimeStore: _runtimeStore);
+      case 'duplex':
+        return _DuplexCard(runtimeStore: _runtimeStore);
+      case 'uptime':
+        return _UptimeCard(runtimeStore: _runtimeStore);
+      case 'logs':
+        return _LogsSummaryCard(onOpenInstances: () => go(ShellTab.instances));
+      case 'shortcuts':
+        return _ShortcutsCard(onNavigate: go);
+      case 'update':
+        return const _UpdateCard();
+      case 'core':
+        return const _CoreCard();
+      case DashboardLayout.peerInfoType:
+        return _PeerInfoCard(
+          key: ValueKey(w.id),
+          instancePath: w.instancePath,
+          items: items,
+          runtimeStore: _runtimeStore,
+          onBind: () => _pickAndBindInstance(w.id),
+          onOpenPeers: () => _openPeersForCard(w),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
   }
 
   @override
@@ -305,10 +402,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   style: TextStyle(color: colorScheme.error),
                 ),
                 const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _loadSnapshot,
-                  child: const Text('重试'),
-                ),
+                FilledButton(onPressed: _loadSnapshot, child: const Text('重试')),
               ],
             ),
           );
@@ -321,8 +415,9 @@ class _DashboardPageState extends State<DashboardPage> {
         final items = _cachedSnapshot?.items ?? const <InstanceCatalogItem>[];
 
         return Watch((context) {
-          final runningCount =
-              items.where((item) => _runtimeStore.isRunning(item.path)).length;
+          final runningCount = items
+              .where((item) => _runtimeStore.isRunning(item.path))
+              .length;
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -346,7 +441,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 isEditing: _isEditingLayout,
                 onReorder: _saveLayoutOrder,
                 onRemove: _removeCard,
-                items: _buildGridItems(),
+                items: _buildGridItems(items),
               ),
               if (_isEditingLayout &&
                   (_layout ?? DashboardLayout.defaultLayout)
@@ -368,8 +463,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 Center(
                   child: FilledButton.tonalIcon(
                     onPressed: () {
-                      getIt<ShellNavigationController>()
-                          .navigateTo(ShellTab.instances);
+                      getIt<ShellNavigationController>().navigateTo(
+                        ShellTab.instances,
+                      );
                     },
                     icon: const Icon(Icons.add),
                     label: const Text('还没有实例，去创建'),

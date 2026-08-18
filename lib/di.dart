@@ -1,5 +1,12 @@
 import 'dart:io';
 
+import 'package:astral/data/kernel/core_host.dart';
+import 'package:astral/data/kernel/core_service_controller.dart';
+import 'package:astral/data/kernel/core_update_service.dart';
+import 'package:astral/data/kernel/embedded_kernel_engine.dart';
+import 'package:astral/data/kernel/kernel_engine.dart';
+import 'package:astral/data/kernel/kernel_mode.dart';
+import 'package:astral/data/kernel/service_kernel_engine.dart';
 import 'package:astral/data/services/app_settings_service.dart';
 import 'package:astral/data/services/instance_catalog_service.dart';
 import 'package:astral/data/services/instance_connection_service.dart';
@@ -30,12 +37,8 @@ Future<void> setupDI() async {
   getIt.registerSingleton<AppSettingsService>(AppSettingsService(prefs));
 
   getIt.registerLazySingleton<LogService>(() => LogService());
-  getIt.registerLazySingleton<PlatformPathService>(
-    () => PlatformPathService(),
-  );
-  getIt.registerLazySingleton<TomlConfigService>(
-    () => TomlConfigService(),
-  );
+  getIt.registerLazySingleton<PlatformPathService>(() => PlatformPathService());
+  getIt.registerLazySingleton<TomlConfigService>(() => TomlConfigService());
   getIt.registerLazySingleton<InstanceCatalogService>(
     () => InstanceCatalogService(
       getIt<PlatformPathService>(),
@@ -45,13 +48,49 @@ Future<void> setupDI() async {
 
   await ClientRuntimeInfo.warmUp();
 
-  final p2p = P2PService();
-  await p2p.ensureInitialized();
-  getIt.registerSingleton<P2PService>(p2p);
-  getIt.registerLazySingleton<VpnManager>(
-    () => VpnManager(getIt<P2PService>()),
+  final host = CoreHost();
+  getIt.registerSingleton<CoreHost>(host);
+
+  if (KernelMode.forPlatform() == KernelMode.service) {
+    getIt.registerLazySingleton<CoreUpdateService>(
+      () => CoreUpdateService(getIt<CoreHost>()),
+    );
+    getIt.registerSingleton<CoreServiceController>(
+      CoreServiceController(
+        host: getIt<CoreHost>(),
+        updater: getIt<CoreUpdateService>(),
+        settings: getIt<AppSettingsService>(),
+        log: getIt<LogService>(),
+      ),
+    );
+    try {
+      await getIt<CoreServiceController>().ensureProvisioned(
+        allowNetwork: false,
+      );
+    } catch (e) {
+      getIt<LogService>().warn('DI', '自动准备内核失败: $e');
+    }
+  }
+
+  final engine = await _createKernelEngine();
+  getIt.registerSingleton<KernelEngine>(engine);
+  if (engine.mode == KernelMode.embedded) {
+    try {
+      await engine.ensureReady();
+    } catch (e) {
+      getIt<LogService>().warn('DI', '内核未就绪: $e');
+    }
+  }
+  getIt<LogService>().info(
+    'DI',
+    'KernelEngine ${engine.mode.label}: ${engine.statusMessage ?? '窗口显示后连接'}',
   );
-  getIt<LogService>().info('DI', 'P2PService ready');
+
+  if (engine.mode == KernelMode.embedded && Platform.isAndroid) {
+    getIt.registerLazySingleton<VpnManager>(
+      () => VpnManager(getIt<P2PService>()),
+    );
+  }
 
   final runtimeStore = InstanceRuntimeStore();
   getIt.registerSingleton<InstanceRuntimeStore>(runtimeStore);
@@ -63,15 +102,21 @@ Future<void> setupDI() async {
   getIt.registerSingleton<InstanceConnectionService>(connection);
   runtimeStore.onNaturalExit = connection.handleNaturalExit;
 
-  if (Platform.isAndroid) {
+  if (getIt.isRegistered<VpnManager>()) {
     final vpn = getIt<VpnManager>();
     vpn.onRevokedBySystem = connection.handleVpnRevokedBySystem;
     vpn.startListening();
   }
 
+  if (engine.connected) {
+    await syncRunningInstances();
+  }
+
   getIt.registerLazySingleton<SettingsState>(() => SettingsState());
   getIt<SettingsState>().loadFromPersistence();
-  getIt.registerLazySingleton<ThemeRevealController>(() => ThemeRevealController());
+  getIt.registerLazySingleton<ThemeRevealController>(
+    () => ThemeRevealController(),
+  );
 
   getIt.registerSingleton<UpdateState>(UpdateState());
   getIt<UpdateState>().loadFromPersistence();
@@ -87,7 +132,90 @@ Future<void> setupDI() async {
   );
 }
 
-/// 退出前：停实例 → VPN → FRB。可安全重复调用。
+Future<KernelEngine> _createKernelEngine() async {
+  if (KernelMode.forPlatform() == KernelMode.service) {
+    return ServiceKernelEngine(
+      host: getIt<CoreHost>(),
+      settings: getIt<AppSettingsService>(),
+      log: getIt<LogService>(),
+    );
+  }
+
+  final p2p = P2PService();
+  getIt.registerSingleton<P2PService>(p2p);
+  return EmbeddedKernelEngine(p2p);
+}
+
+Future<void> syncRunningInstances() async {
+  if (!getIt.isRegistered<KernelEngine>() ||
+      !getIt.isRegistered<InstanceRuntimeStore>()) {
+    return;
+  }
+  final engine = getIt<KernelEngine>();
+  if (!engine.connected) return;
+  final log = getIt.isRegistered<LogService>() ? getIt<LogService>() : null;
+  try {
+    final store = getIt<InstanceRuntimeStore>();
+    await store.attachKernel();
+    final running = await engine.listRunning();
+    InstanceCatalogSnapshot? snapshot;
+    if (getIt.isRegistered<InstanceCatalogService>()) {
+      snapshot = await getIt<InstanceCatalogService>().loadSnapshot();
+    }
+    var restored = 0;
+    for (final item in running) {
+      final path = await _resolveRunningInstancePath(item, snapshot);
+      if (path == null || path.isEmpty) {
+        log?.warn('DI', '运行中实例无法对回配置: ${item.instanceId}');
+        continue;
+      }
+      store.setRunning(path, item.instanceId);
+      restored++;
+    }
+    if (restored > 0) {
+      log?.info('DI', '已恢复 $restored 个运行中实例');
+    }
+  } catch (e) {
+    log?.warn('DI', '同步运行中实例失败: $e');
+  }
+}
+
+Future<String?> _resolveRunningInstancePath(
+  KernelRunningInstance item,
+  InstanceCatalogSnapshot? snapshot,
+) async {
+  final source = item.sourcePath.trim();
+  final items = snapshot?.items ?? const <InstanceCatalogItem>[];
+  if (source.isNotEmpty) {
+    for (final catalogItem in items) {
+      if (_sameFsPath(catalogItem.path, source)) return catalogItem.path;
+    }
+    if (File(source).existsSync()) return source;
+  }
+  if (items.isEmpty ||
+      !getIt.isRegistered<InstanceCatalogService>() ||
+      !getIt.isRegistered<TomlConfigService>()) {
+    return source.isEmpty ? null : source;
+  }
+  final catalog = getIt<InstanceCatalogService>();
+  final tomlSvc = getIt<TomlConfigService>();
+  final want = item.instanceId.trim().toLowerCase();
+  for (final catalogItem in items) {
+    final toml = await catalog.readToml(catalogItem.path);
+    if (toml == null) continue;
+    final id = tomlSvc.readInstanceId(toml)?.toLowerCase();
+    if (id != null && id == want) return catalogItem.path;
+  }
+  return null;
+}
+
+bool _sameFsPath(String a, String b) {
+  final na = a.replaceAll('/', '\\').trim().toLowerCase();
+  final nb = b.replaceAll('/', '\\').trim().toLowerCase();
+  return na == nb;
+}
+
+/// 退出前清理。服务模式不停内核实例。
 Future<void> disposeDI() async {
   if (_diDisposed) return;
   _diDisposed = true;
@@ -99,11 +227,17 @@ Future<void> disposeDI() async {
     }
   }
 
-  if (getIt.isRegistered<InstanceConnectionService>()) {
-    try {
-      await getIt<InstanceConnectionService>().stopAll();
-    } catch (e) {
-      log('stopAll failed: $e');
+  final engine = getIt.isRegistered<KernelEngine>()
+      ? getIt<KernelEngine>()
+      : null;
+
+  if (engine == null || engine.stopsInstancesOnExit) {
+    if (getIt.isRegistered<InstanceConnectionService>()) {
+      try {
+        await getIt<InstanceConnectionService>().stopAll();
+      } catch (e) {
+        log('stopAll failed: $e');
+      }
     }
   }
   if (getIt.isRegistered<VpnManager>()) {
@@ -116,8 +250,12 @@ Future<void> disposeDI() async {
   if (getIt.isRegistered<InstanceRuntimeStore>()) {
     getIt<InstanceRuntimeStore>().dispose();
   }
-  if (getIt.isRegistered<P2PService>()) {
-    getIt<P2PService>().dispose();
+  if (engine != null) {
+    try {
+      await engine.dispose();
+    } catch (e) {
+      log('KernelEngine.dispose failed: $e');
+    }
   }
   if (getIt.isRegistered<LogService>()) {
     getIt<LogService>().dispose();

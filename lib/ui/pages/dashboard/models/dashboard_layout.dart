@@ -2,37 +2,61 @@ import 'dart:convert';
 
 class DashboardWidgetConfig {
   final String id;
+  final String? type;
+  final String? instancePath;
   final int widthSpan;
   final int heightSpan;
   final int order;
 
   const DashboardWidgetConfig({
     required this.id,
+    this.type,
+    this.instancePath,
     this.widthSpan = 1,
     this.heightSpan = 1,
     this.order = 0,
   });
 
+  String get catalogType {
+    final t = type?.trim();
+    if (t == null || t.isEmpty) return id;
+    return t;
+  }
+
   DashboardWidgetConfig copyWith({
     String? id,
+    String? type,
+    String? instancePath,
+    bool clearInstancePath = false,
     int? widthSpan,
     int? heightSpan,
     int? order,
   }) {
     return DashboardWidgetConfig(
       id: id ?? this.id,
+      type: type ?? this.type,
+      instancePath:
+          clearInstancePath ? null : (instancePath ?? this.instancePath),
       widthSpan: widthSpan ?? this.widthSpan,
       heightSpan: heightSpan ?? this.heightSpan,
       order: order ?? this.order,
     );
   }
 
-  /// 持久化只存 id + order；span 运行时取自 catalog。
-  Map<String, dynamic> toMap() => {'id': id, 'order': order};
+  /// 单例卡只存 id + order；可重复卡额外存 type / instancePath。
+  Map<String, dynamic> toMap() {
+    final map = <String, dynamic>{'id': id, 'order': order};
+    if (catalogType != id) map['type'] = catalogType;
+    final path = instancePath?.trim();
+    if (path != null && path.isNotEmpty) map['instancePath'] = path;
+    return map;
+  }
 
   factory DashboardWidgetConfig.fromMap(Map<String, dynamic> map) {
     return DashboardWidgetConfig(
       id: map['id'] as String,
+      type: map['type'] as String?,
+      instancePath: map['instancePath'] as String?,
       order: (map['order'] as num?)?.toInt() ?? 0,
     );
   }
@@ -79,11 +103,16 @@ class DashboardLayout {
   }) {
     return DashboardWidgetConfig(
       id: id,
+      type: id,
       widthSpan: widthSpan,
       heightSpan: heightSpan,
       order: order,
     );
   }
+
+  static const peerInfoType = 'peer_info';
+
+  static bool allowsMultiple(String type) => type == peerInfoType;
 
   /// 全部可选卡片（添加面板用）。装饰卡已移除（hitokoto/tips/today）。
   static List<DashboardWidgetConfig> get catalog => [
@@ -97,6 +126,7 @@ class DashboardLayout {
         _w('nodes', order: 7),
         _w('duplex', order: 8),
         _w('logs', order: 9),
+        _w(peerInfoType, widthSpan: 4, heightSpan: 2, order: 10),
       ];
 
   /// 默认启用：流量、连接质量、内核、快捷入口。
@@ -109,7 +139,7 @@ class DashboardLayout {
         ],
       );
 
-  static final knownIds = {for (final w in catalog) w.id};
+  static final knownIds = {for (final w in catalog) w.catalogType};
 
   static const titles = <String, String>{
     'traffic': '流量',
@@ -122,29 +152,48 @@ class DashboardLayout {
     'shortcuts': '快捷入口',
     'update': '更新',
     'core': '内核',
+    peerInfoType: '节点信息',
   };
 
-  static String titleOf(String id) => titles[id] ?? id;
+  static String titleOf(String type) => titles[type] ?? type;
 
-  static DashboardWidgetConfig? catalogEntry(String id) {
+  static DashboardWidgetConfig? catalogEntry(String type) {
     for (final w in catalog) {
-      if (w.id == id) return w;
+      if (w.catalogType == type) return w;
     }
     return null;
   }
 
-  /// 去未知/重复，并用 catalog 填充 span；空布局回退默认。
+  static String newSlotId(String type) =>
+      '${type}_${DateTime.now().microsecondsSinceEpoch}';
+
+  /// 去未知；单例卡去重；可重复卡按 id 保留并带上绑定。
   static DashboardLayout normalize(DashboardLayout layout) {
-    final catalogById = {for (final w in catalog) w.id: w};
-    final seen = <String>{};
+    final catalogByType = {for (final w in catalog) w.catalogType: w};
+    final seenSingleton = <String>{};
+    final seenIds = <String>{};
     final ordered = [...layout.widgets]
       ..sort((a, b) => a.order.compareTo(b.order));
 
     final kept = <DashboardWidgetConfig>[];
     for (final w in ordered) {
-      final def = catalogById[w.id];
-      if (def == null || !seen.add(w.id)) continue;
-      kept.add(def.copyWith(order: kept.length));
+      final type = w.catalogType;
+      final def = catalogByType[type];
+      if (def == null) continue;
+      if (!allowsMultiple(type)) {
+        if (!seenSingleton.add(type)) continue;
+        kept.add(def.copyWith(order: kept.length));
+        continue;
+      }
+      if (!seenIds.add(w.id)) continue;
+      kept.add(
+        def.copyWith(
+          id: w.id,
+          type: type,
+          instancePath: w.instancePath,
+          order: kept.length,
+        ),
+      );
     }
 
     if (kept.isEmpty) return defaultLayout;

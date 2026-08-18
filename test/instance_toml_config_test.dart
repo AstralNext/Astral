@@ -1,4 +1,5 @@
 import 'package:astral/data/models/instance_toml_config.dart';
+import 'package:astral/data/services/toml_config_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -58,5 +59,17 @@ encryption_algorithm = "chacha20"
     expect(out, contains('[[port_forward]]'));
     expect(out, contains('lazy_p2p = true'));
     expect(out, isNot(contains('ipv4')));
+  });
+
+  test('reads instance_id from toml', () {
+    const src = '''
+instance_name = "a"
+instance_id = "AEC401C7-E04F-4B57-A70B-E52E3A0C452A"
+ipv4 = "10.126.126.1/24"
+''';
+    expect(
+      TomlConfigService().readInstanceId(src),
+      'AEC401C7-E04F-4B57-A70B-E52E3A0C452A',
+    );
   });
 }
