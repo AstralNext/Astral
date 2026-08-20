@@ -11,10 +11,4 @@ class AppConstants {
       'https://github.com/$githubOwner/$githubRepo';
   static const String githubIssuesPage =
       'https://github.com/$githubOwner/$githubRepo/issues';
-
-  static const String coreGithubRepo = 'astral-core';
-  static const String coreGithubReleasesUrl =
-      'https://api.github.com/repos/$githubOwner/$coreGithubRepo/releases?per_page=20';
-  static const String coreGithubReleasesPage =
-      'https://github.com/$githubOwner/$coreGithubRepo/releases';
 }

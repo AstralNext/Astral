@@ -10,8 +10,9 @@ class CoreRpcException implements Exception {
   final int? code;
 
   @override
-  String toString() =>
-      code == null ? 'CoreRpcException: $message' : 'CoreRpcException($code): $message';
+  String toString() => code == null
+      ? 'CoreRpcException: $message'
+      : 'CoreRpcException($code): $message';
 }
 
 /// 本机 astral-core JSON-RPC 2.0 客户端（`POST http://host:port/`）。
@@ -67,7 +68,9 @@ class CoreRpcClient {
     if (error is Map) {
       throw CoreRpcException(
         '${error['message'] ?? 'rpc error'}',
-        code: error['code'] is int ? error['code'] as int : int.tryParse('${error['code']}'),
+        code: error['code'] is int
+            ? error['code'] as int
+            : int.tryParse('${error['code']}'),
       );
     }
     return decoded['result'];

@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
 import 'package:astral/data/kernel/core_service_controller.dart';
-import 'package:astral/data/kernel/core_update_service.dart';
 import 'package:astral/data/kernel/embedded_kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_mode.dart';
@@ -52,23 +51,17 @@ Future<void> setupDI() async {
   getIt.registerSingleton<CoreHost>(host);
 
   if (KernelMode.forPlatform() == KernelMode.service) {
-    getIt.registerLazySingleton<CoreUpdateService>(
-      () => CoreUpdateService(getIt<CoreHost>()),
-    );
     getIt.registerSingleton<CoreServiceController>(
       CoreServiceController(
         host: getIt<CoreHost>(),
-        updater: getIt<CoreUpdateService>(),
         settings: getIt<AppSettingsService>(),
         log: getIt<LogService>(),
       ),
     );
     try {
-      await getIt<CoreServiceController>().ensureProvisioned(
-        allowElevate: false,
-      );
+      await getIt<CoreServiceController>().refresh();
     } catch (e) {
-      getIt<LogService>().warn('DI', '自动准备内核失败: $e');
+      getIt<LogService>().warn('DI', '刷新内核服务状态失败: $e');
     }
   }
 
@@ -136,6 +129,7 @@ Future<KernelEngine> _createKernelEngine() async {
   if (KernelMode.forPlatform() == KernelMode.service) {
     return ServiceKernelEngine(
       host: getIt<CoreHost>(),
+      core: getIt<CoreServiceController>(),
       log: getIt<LogService>(),
     );
   }
@@ -145,7 +139,7 @@ Future<KernelEngine> _createKernelEngine() async {
   return EmbeddedKernelEngine(p2p);
 }
 
-Future<void> syncRunningInstances() async {
+Future<void> syncRunningInstances({bool reattachKernel = true}) async {
   if (!getIt.isRegistered<KernelEngine>() ||
       !getIt.isRegistered<InstanceRuntimeStore>()) {
     return;
@@ -155,7 +149,10 @@ Future<void> syncRunningInstances() async {
   final log = getIt.isRegistered<LogService>() ? getIt<LogService>() : null;
   try {
     final store = getIt<InstanceRuntimeStore>();
-    await store.attachKernel();
+    if (reattachKernel) {
+      await store.attachKernel();
+    }
+    await store.refreshStartedTimesFromKernel();
     final running = await engine.listRunning();
     InstanceCatalogSnapshot? snapshot;
     if (getIt.isRegistered<InstanceCatalogService>()) {
@@ -168,7 +165,7 @@ Future<void> syncRunningInstances() async {
         log?.warn('DI', '运行中实例无法对回配置: ${item.instanceId}');
         continue;
       }
-      store.setRunning(path, item.instanceId);
+      store.setRunning(path, item.instanceId, startedAt: item.startedAt);
       restored++;
     }
     if (restored > 0) {
@@ -176,6 +173,18 @@ Future<void> syncRunningInstances() async {
     }
   } catch (e) {
     log?.warn('DI', '同步运行中实例失败: $e');
+  }
+}
+
+/// 内核开机自启实例可能稍晚才起来，短时间内再对几次状态。
+Future<void> followRunningInstances() async {
+  for (final delay in const [
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 9),
+  ]) {
+    await Future<void>.delayed(delay);
+    await syncRunningInstances(reattachKernel: false);
   }
 }
 

@@ -1,8 +1,9 @@
-import 'dart:ffi';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+
+import 'package:astral/data/kernel/core_service_health.dart';
 
 enum CoreInstallState {
   missingBinary,
@@ -44,15 +45,25 @@ class CoreCliResult {
 
 /// 定位 / 拉起 / 安装本机 astral-core。
 class CoreHost {
-  static const instanceName = 'default';
+  /// OS 服务限定名（Windows SCM / systemd / launchd）。
+  static const serviceQualifiedName = 'dev.astral.core';
+
+  /// 旧版服务名（迁移清理用）。
+  static const legacyServiceQualifiedName = 'dev.astral.core-default';
+
+  /// 服务代际标记。
+  static const serviceGeneration = 'core-v2';
+
+  /// 本机 JSON-RPC 监听地址。
+  static const listenAddress = '127.0.0.1:50051';
+
+  static const windowsSidecars = ['wintun.dll', 'Packet.dll'];
 
   /// Linux / macOS 走用户级服务，无需 root；Windows 为系统服务（必要时 UAC）。
   static bool get useUserService => !Platform.isWindows;
 
   static String get binaryName =>
       Platform.isWindows ? 'astral-core.exe' : 'astral-core';
-
-  static const defaultListen = '127.0.0.1:50051';
 
   String dataRoot() {
     if (Platform.isWindows) {
@@ -77,8 +88,8 @@ class CoreHost {
     return p.join(base, 'astral-core');
   }
 
-  /// 与 astral-core 服务默认 `--data-dir`（`instances/<name>`）对齐。
-  String instanceDataDir() => p.join(dataRoot(), 'instances', instanceName);
+  /// 后台服务运行数据目录（与 astral-core `--data-dir` 默认一致）。
+  String runtimeDataDir() => dataRoot();
 
   /// 与 astral-core `layout::default_install_root` 对齐。
   String defaultInstallRoot() {
@@ -111,51 +122,6 @@ class CoreHost {
   String bundledProgramPath() =>
       p.join(File(Platform.resolvedExecutable).parent.path, binaryName);
 
-  String managedBinDir() {
-    if (Platform.isWindows) {
-      final local = Platform.environment['LOCALAPPDATA'] ?? '';
-      return p.join(local, 'Astral', 'astral-core', 'bin');
-    }
-    if (Platform.isMacOS) {
-      final home = Platform.environment['HOME'] ?? '';
-      return p.join(
-        home,
-        'Library',
-        'Application Support',
-        'dev.Astral.astral-core',
-        'bin',
-      );
-    }
-    final xdg = Platform.environment['XDG_DATA_HOME'];
-    final home = Platform.environment['HOME'] ?? '';
-    final base = (xdg != null && xdg.isNotEmpty)
-        ? xdg
-        : p.join(home, '.local', 'share');
-    return p.join(base, 'astral-core', 'bin');
-  }
-
-  /// 定位候选：设置路径、GUI 旁、已安装 current、托管 bin、并列仓库的本地构建。
-  List<String> binaryCandidates(String? configured) {
-    final seen = <String>{};
-    final out = <String>[];
-    void add(String path) {
-      final n = p.normalize(path);
-      if (n.isEmpty || !seen.add(n.toLowerCase())) return;
-      out.add(n);
-    }
-
-    if (configured != null && configured.trim().isNotEmpty) {
-      add(configured.trim());
-    }
-    add(bundledProgramPath());
-    add(currentProgramPath());
-    add(p.join(managedBinDir(), binaryName));
-    for (final path in _devCheckoutBinaries()) {
-      add(path);
-    }
-    return out;
-  }
-
   List<String> _devCheckoutBinaries() {
     final out = <String>[];
     final starts = <String>[
@@ -178,15 +144,12 @@ class CoreHost {
     return out;
   }
 
-  static const windowsSidecars = ['wintun.dll', 'Packet.dll'];
-
   List<String> sidecarSearchDirs(String? nearProgram) {
     return [
       if (nearProgram != null && nearProgram.trim().isNotEmpty)
         File(nearProgram.trim()).parent.path,
       File(bundledProgramPath()).parent.path,
       p.join(Directory.current.path, 'dlls'),
-      managedBinDir(),
     ];
   }
 
@@ -195,7 +158,7 @@ class CoreHost {
     if (!Platform.isWindows) return;
     final destDirs = <String>{
       File(currentProgramPath()).parent.path,
-      managedBinDir(),
+      File(bundledProgramPath()).parent.path,
       if (nearProgram != null && nearProgram.trim().isNotEmpty)
         File(nearProgram.trim()).parent.path,
     };
@@ -206,8 +169,28 @@ class CoreHost {
         await Directory(destDir).create(recursive: true);
         final dest = p.join(destDir, name);
         if (p.equals(src, dest)) continue;
-        await File(src).copy(dest);
+        await _copySidecarReplacing(src, dest);
       }
+    }
+  }
+
+  Future<void> _copySidecarReplacing(String src, String dest) async {
+    final destFile = File(dest);
+    if (destFile.existsSync()) {
+      try {
+        if (await binariesMatch(src, dest)) return;
+      } catch (_) {}
+      try {
+        await destFile.delete();
+      } catch (_) {
+        return;
+      }
+    }
+    try {
+      await File(src).copy(dest);
+    } on FileSystemException catch (e) {
+      if (e.osError?.errorCode == 183 && destFile.existsSync()) return;
+      rethrow;
     }
   }
 
@@ -222,8 +205,7 @@ class CoreHost {
   /// 开发时若 GUI 旁没有内核，从并列仓库构建产物拷过去。
   Future<String?> materializeBundledProgram() async {
     final dest = bundledProgramPath();
-    final destFile = File(dest);
-    if (destFile.existsSync()) return dest;
+    if (File(dest).existsSync()) return dest;
 
     String? newest;
     DateTime? newestMtime;
@@ -275,44 +257,18 @@ class CoreHost {
     return await sha256File(a) == await sha256File(b);
   }
 
-  Future<String?> findUpgradeBinary(String? configured) async {
-    final bundled = await materializeBundledProgram();
-    if (bundled != null) return bundled;
-    if (configured != null &&
-        configured.trim().isNotEmpty &&
-        File(configured.trim()).existsSync()) {
-      return configured.trim();
-    }
-    return findBinary(configured);
-  }
-
-  Future<String?> findBinary(String? configured) async {
-    for (final path in binaryCandidates(configured)) {
+  Future<String?> findBinary() async {
+    for (final path in [bundledProgramPath(), currentProgramPath()]) {
       if (File(path).existsSync()) return path;
     }
-
-    try {
-      final result = await Process.run(Platform.isWindows ? 'where' : 'which', [
-        'astral-core',
-      ], runInShell: true);
-      if (result.exitCode == 0) {
-        final line = result.stdout
-            .toString()
-            .trim()
-            .split(RegExp(r'\r?\n'))
-            .first
-            .trim();
-        if (line.isNotEmpty && File(line).existsSync()) return line;
-      }
-    } catch (_) {}
-    return null;
+    return materializeBundledProgram();
   }
 
   Future<void> spawnDetached({
     required String binary,
-    required String listen,
+    String listen = listenAddress,
   }) async {
-    final dataDir = instanceDataDir();
+    final dataDir = runtimeDataDir();
     await Directory(dataDir).create(recursive: true);
     await Process.start(
       binary,
@@ -323,7 +279,7 @@ class CoreHost {
   }
 
   /// 未安装服务时，清掉占着 JSON-RPC 端口的临时 astral-core，避免再装绑端口失败。
-  Future<void> stopDetachedListener(String listen) async {
+  Future<void> stopDetachedListener([String listen = listenAddress]) async {
     final port = parseListenPort(listen);
     if (port == null) return;
     try {
@@ -371,7 +327,7 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     bool elevate = false,
     String? workingDirectory,
   }) async {
-    final exe = binary ?? await findBinary(null);
+    final exe = binary ?? await findBinary();
     if (exe == null) {
       return const CoreCliResult(
         exitCode: 127,
@@ -410,7 +366,7 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
 
   Future<CoreCliResult> installService({
     required String binary,
-    required String listen,
+    String listen = listenAddress,
   }) {
     return runService(
       'install',
@@ -442,54 +398,60 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     );
   }
 
+  /// 读取 JSON 服务体检报告。
+  Future<CoreServiceHealthReport?> serviceDoctor({String? binary}) async {
+    final result = await runService(
+      'doctor',
+      binary: binary,
+      elevateIfNeeded: false,
+    );
+    if (!result.ok && result.stdout.trim().isEmpty) return null;
+    return CoreServiceHealthReport.tryParse(result.stdout);
+  }
+
+  /// 清理旧服务 / 旧进程，可选迁移 legacy 数据目录。
+  Future<CoreRepairReport?> serviceRepair({
+    String? binary,
+    bool migrateLegacyData = true,
+    bool elevateIfNeeded = true,
+  }) async {
+    final result = await runService(
+      'repair',
+      extra: migrateLegacyData ? const ['--migrate-legacy-data'] : const [],
+      binary: binary,
+      elevateIfNeeded: elevateIfNeeded,
+    );
+    final parsed = result.ok ? parseRepairOutput(result.output) : null;
+    if (parsed != null) return parsed;
+
+    // UAC 提权后子进程 stdout 无法回传，用 doctor 复核是否已修复。
+    final after = await serviceDoctor(binary: binary);
+    if (after != null && !after.needsRepair) {
+      return const CoreRepairReport(
+        stoppedCurrentService: false,
+        uninstalledLegacyService: false,
+        killedStaleListeners: 0,
+        migratedLegacyData: false,
+        removedLegacyDataDir: false,
+        normalizedRegistry: false,
+      );
+    }
+    return null;
+  }
+
   Future<String?> readVersion(String? binary) async {
-    final exe = binary ?? await findBinary(null);
+    final exe = binary ?? await findBinary();
     if (exe == null) return null;
     final result = await runArgs(['--version'], binary: exe);
     if (!result.ok && result.stdout.trim().isEmpty) return null;
     return parseCoreVersion('${result.stdout}\n${result.stderr}');
   }
 
-  Future<CoreInstallState> queryInstallState({String? configured}) async {
-    final binary = await findBinary(configured);
+  Future<CoreInstallState> queryInstallState() async {
+    final binary = await findBinary();
     if (binary == null) return CoreInstallState.missingBinary;
     final result = await serviceStatus(binary: binary);
     return parseInstallState(result.output);
-  }
-
-  static String releaseAssetName() => releaseAssetNames().first;
-
-  /// 当前平台优先匹配的发行包名，后接可运行的回退（如 Windows ARM 用 x64）。
-  static List<String> releaseAssetNames() {
-    final abi = Abi.current();
-    if (Platform.isWindows) {
-      if (abi == Abi.windowsArm64) {
-        return const [
-          'astral-core-windows-aarch64.exe',
-          'astral-core-windows-x86_64.exe',
-        ];
-      }
-      return const ['astral-core-windows-x86_64.exe'];
-    }
-    if (Platform.isMacOS) {
-      if (abi == Abi.macosX64) return const ['astral-core-macos-x86_64'];
-      return const ['astral-core-macos-aarch64'];
-    }
-    if (abi == Abi.linuxArm64) return const ['astral-core-linux-aarch64'];
-    return const ['astral-core-linux-x86_64'];
-  }
-
-  static List<String> wintunAssetNames() {
-    if (!Platform.isWindows) return const [];
-    if (Abi.current() == Abi.windowsArm64) {
-      return const ['wintun-windows-aarch64.dll', 'wintun-windows-x86_64.dll'];
-    }
-    return const ['wintun-windows-x86_64.dll'];
-  }
-
-  static String? wintunAssetName() {
-    final names = wintunAssetNames();
-    return names.isEmpty ? null : names.first;
   }
 
   Future<CoreCliResult> _runElevated(
@@ -544,14 +506,13 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
         text.contains('正在运行');
   }
 
-  /// 旧 gRPC 内核会把 HTTP JSON-RPC 连接直接 RST。
+  /// 旧协议内核会把 HTTP JSON-RPC 连接直接 RST。
   static bool looksLikeProtocolMismatch(Object error) {
     final text = error.toString().toLowerCase();
     return text.contains('10054') ||
         text.contains('connection reset') ||
         text.contains('connection closed') ||
         text.contains('强迫关闭') ||
-        text.contains('http exception') ||
         text.contains('unexpected end of stream') ||
         text.contains('connection abort');
   }

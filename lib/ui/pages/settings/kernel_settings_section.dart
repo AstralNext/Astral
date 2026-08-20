@@ -44,8 +44,8 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('卸载内核服务'),
-          content: const Text('卸载后开机不再自动运行内核。确定继续？'),
+          title: const Text('卸载后台内核'),
+          content: const Text('卸载后关闭软件时，网络内核不会继续在后台运行。确定继续？'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -62,6 +62,35 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
     return ok == true;
   }
 
+  String _statusText({
+    required CoreInstallState state,
+    required String version,
+    required bool hasUpdate,
+    required KernelEngine engine,
+    required CoreServiceController core,
+  }) {
+    if (hasUpdate) return '版本与当前软件不一致';
+    if (engine.statusMessage != null &&
+        engine.statusMessage!.contains('已连接')) {
+      return '已连接并在后台运行';
+    }
+    if (state == CoreInstallState.running) {
+      return version.isEmpty ? '已在后台运行' : '已在后台运行 · $version';
+    }
+    if (state == CoreInstallState.stopped) {
+      return version.isEmpty ? '已安装，当前未运行' : '已安装，当前未运行 · $version';
+    }
+    if (state == CoreInstallState.notInstalled) {
+      return '尚未安装后台服务';
+    }
+    if (state == CoreInstallState.missingBinary) {
+      return '未找到内核程序';
+    }
+    final last = core.lastMessage.value;
+    if (last != null && last.isNotEmpty) return last;
+    return state.label;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!getIt.isRegistered<CoreServiceController>()) {
@@ -69,22 +98,22 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
     }
 
     return AstralSettingsSection(
-      title: '内核服务',
+      title: '后台内核',
       child: Watch((context) {
         final core = _core;
         final state = core.state.value;
         final busy = core.busy.value;
         final version = core.version.value;
-        final hasUpdate = core.hasUpdate.value;
+        final hasUpdate = core.bundledDiffers.value;
         final installed = state.isInstalled;
         final engine = _engine;
-
-        final statusBits = <String>[
-          state.label,
-          if (version.isNotEmpty) version,
-          if (engine.statusMessage != null) engine.statusMessage!,
-          if (core.lastMessage.value != null) core.lastMessage.value!,
-        ];
+        final status = _statusText(
+          state: state,
+          version: version,
+          hasUpdate: hasUpdate,
+          engine: engine,
+          core: core,
+        );
 
         return Column(
           children: [
@@ -97,8 +126,8 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
                           : Icons.pause_circle_outline)
                     : Icons.cloud_off_outlined,
               ),
-              title: const Text('astral-core'),
-              subtitle: Text(statusBits.join(' · ')),
+              title: const Text('Astral 后台内核'),
+              subtitle: Text(status),
             ),
             const AstralSettingsDivider(),
             ListTile(
@@ -107,9 +136,11 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
                     ? Icons.delete_outline
                     : Icons.install_desktop_outlined,
               ),
-              title: Text(installed ? '卸载服务' : '安装服务'),
+              title: Text(installed ? '卸载后台服务' : '安装后台服务'),
               subtitle: Text(
-                installed ? '移除系统服务，开机不再自启' : '安装为系统服务并开机自启（关 GUI 内核继续运行）',
+                installed
+                    ? '移除系统服务，关闭软件后不再继续运行'
+                    : '安装为系统服务，关闭软件后网络内核继续运行',
               ),
               enabled: !busy,
               onTap: () => unawaited(
@@ -123,18 +154,16 @@ class _KernelSettingsSectionState extends State<KernelSettingsSection> {
                 }),
               ),
             ),
-            const AstralSettingsDivider(),
-            ListTile(
-              leading: Icon(
-                hasUpdate ? Icons.system_update_alt : Icons.sync_outlined,
+            if (hasUpdate) ...[
+              const AstralSettingsDivider(),
+              ListTile(
+                leading: const Icon(Icons.system_update_alt),
+                title: const Text('立即同步内核版本'),
+                subtitle: const Text('用当前软件自带的内核覆盖后台服务'),
+                enabled: !busy,
+                onTap: () => unawaited(_run(() => core.syncFromBundled())),
               ),
-              title: Text(hasUpdate ? '同步携带的内核' : '内核已与软件一致'),
-              subtitle: Text(
-                hasUpdate ? '用本软件自带的 astral-core 覆盖系统服务' : '启动时会自动对比，无需从网上更新内核',
-              ),
-              enabled: !busy && hasUpdate,
-              onTap: () => unawaited(_run(() => core.syncFromBundled())),
-            ),
+            ],
           ],
         );
       }),

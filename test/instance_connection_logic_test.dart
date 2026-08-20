@@ -171,6 +171,14 @@ class _FakeKernel implements KernelEngine {
   Stream<KernelLogEvent> subscribeCoreLogs() => const Stream.empty();
 
   @override
+  Future<List<KernelLogEvent>> recentCoreLogs({
+    int after = 0,
+    int limit = 500,
+    String? instanceId,
+  }) async =>
+      const [];
+
+  @override
   Future<KVNetworkStatus> getNetworkStatus(String instanceId) async =>
       KVNetworkStatus(totalNodes: BigInt.zero, nodes: const []);
 

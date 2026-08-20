@@ -202,12 +202,9 @@ class InstanceRuntimeStore {
     try {
       _coreLogSubscription = engine.subscribeCoreLogs().listen(
         (event) {
-          final instanceId = event.instanceId;
           final message = event.message;
           if (message.isEmpty) return;
-          final instancePath = instanceId.isEmpty
-              ? null
-              : pathByInstanceId.value[instanceId];
+          final instancePath = _resolveLogInstancePath(event);
           _logService.info('P2P', message, instancePath: instancePath);
         },
         onError: (Object e) {
@@ -241,6 +238,48 @@ class InstanceRuntimeStore {
     });
   }
 
+  static final _instanceIdInMessage = RegExp(
+    r'^\[([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]',
+  );
+
+  String? _resolveLogInstancePath(KernelLogEvent event) {
+    var instanceId = event.instanceId.trim();
+    if (instanceId.isEmpty) {
+      final match = _instanceIdInMessage.firstMatch(event.message.trim());
+      if (match != null) {
+        instanceId = match.group(1) ?? '';
+      }
+    }
+    if (instanceId.isNotEmpty) {
+      return pathByInstanceId.value[instanceId];
+    }
+    final running = instanceIdByPath.value;
+    if (running.length == 1) {
+      return running.keys.first;
+    }
+    return null;
+  }
+
+  /// 打开实例日志页时，从内核缓冲补拉历史。
+  Future<void> importKernelLogsForInstance({
+    required String instancePath,
+    required String instanceId,
+  }) async {
+    if (!_engine.connected) return;
+    try {
+      final lines = await _engine.recentCoreLogs(
+        instanceId: instanceId,
+        limit: 500,
+      );
+      for (final line in lines) {
+        if (line.message.isEmpty) continue;
+        _logService.info('P2P', line.message, instancePath: instancePath);
+      }
+    } catch (e) {
+      _logService.warn('P2P', '拉取内核历史日志失败: $e');
+    }
+  }
+
   void setStarting(String path, bool starting) {
     final set = Set<String>.from(startingPaths.value);
     if (starting) {
@@ -269,7 +308,11 @@ class InstanceRuntimeStore {
     final times = Map<String, DateTime>.from(startTimeByPath.value);
     ids[path] = instanceId;
     paths[instanceId] = path;
-    times[path] = startedAt ?? DateTime.now();
+    if (startedAt != null) {
+      times[path] = startedAt;
+    } else if (!times.containsKey(path)) {
+      times[path] = DateTime.now();
+    }
     instanceIdByPath.value = ids;
     pathByInstanceId.value = paths;
     startTimeByPath.value = times;
@@ -299,6 +342,37 @@ class InstanceRuntimeStore {
   String? getInstanceId(String path) => instanceIdByPath.value[path];
 
   DateTime? getStartTime(String path) => startTimeByPath.value[path];
+
+  /// 从内核拉取运行中实例的启动时刻（GUI 重开 / 旧内核无字段时补全）。
+  Future<void> refreshStartedTimesFromKernel() async {
+    if (!_engine.connected) return;
+    try {
+      final running = await _engine.listRunning();
+      if (running.isEmpty) return;
+
+      final times = Map<String, DateTime>.from(startTimeByPath.value);
+      var changed = false;
+
+      for (final item in running) {
+        final path = pathByInstanceId.value[item.instanceId]?.trim();
+        if (path == null || path.isEmpty) continue;
+
+        DateTime? started = item.startedAt;
+        if (started == null) {
+          final probe = await _engine.inspectInstance(item.instanceId);
+          started = probe.startedAt;
+        }
+        if (started == null) continue;
+        if (times[path] == started) continue;
+        times[path] = started;
+        changed = true;
+      }
+
+      if (changed) startTimeByPath.value = times;
+    } catch (e) {
+      _logService.warn('P2P', 'refreshStartedTimes failed: $e');
+    }
+  }
 
   bool isStarting(String path) => startingPaths.value.contains(path);
 
@@ -397,6 +471,14 @@ class InstanceRuntimeStore {
       if (!stillUp) {
         await _markNaturalExit(path, instanceId);
         return;
+      }
+      if (startTimeByPath.value[path] == null) {
+        final probe = await _engine.inspectInstance(instanceId);
+        if (probe.startedAt != null && _stillMapped(path, instanceId)) {
+          final times = Map<String, DateTime>.from(startTimeByPath.value);
+          times[path] = probe.startedAt!;
+          startTimeByPath.value = times;
+        }
       }
     } catch (e) {
       if (!_stillMapped(path, instanceId)) return;

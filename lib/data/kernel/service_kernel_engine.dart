@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
 import 'package:astral/data/kernel/core_rpc_client.dart';
+import 'package:astral/data/kernel/core_service_controller.dart';
 import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_mode.dart';
 import 'package:astral/data/services/log_service.dart';
@@ -10,11 +11,16 @@ import 'package:astral_rust_core/astral_rust_core.dart'
     show KVNetworkStatus, KVNodeInfo;
 
 class ServiceKernelEngine implements KernelEngine {
-  ServiceKernelEngine({required CoreHost host, required LogService log})
-    : _host = host,
-      _log = log;
+  ServiceKernelEngine({
+    required CoreHost host,
+    required CoreServiceController core,
+    required LogService log,
+  }) : _host = host,
+       _core = core,
+       _log = log;
 
   final CoreHost _host;
+  final CoreServiceController _core;
   final LogService _log;
 
   CoreRpcClient? _client;
@@ -57,50 +63,76 @@ class ServiceKernelEngine implements KernelEngine {
     return started;
   }
 
-  Future<void> _ensureReadyBody() async {
-    await _host.ensureRuntimeSidecars(
-      nearProgram: await _host.findBinary(null),
-    );
+  /// UDP 发现：发 `ASTRAL_DISCOVER` → 内核回 `ASTRAL_CORE <addr>`。
+  Future<String?> _udpDiscover() async {
+    RawDatagramSocket? sock;
+    try {
+      sock = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final target = InternetAddress.loopbackIPv4;
+      sock.send('ASTRAL_DISCOVER'.codeUnits, target, 50050);
+      final result = await sock.timeout(const Duration(milliseconds: 500)).firstWhere(
+        (e) => e == RawSocketEvent.read,
+      );
+      if (result == RawSocketEvent.read) {
+        final dg = sock.receive();
+        if (dg != null) {
+          final text = String.fromCharCodes(dg.data);
+          if (text.startsWith('ASTRAL_CORE ')) {
+            return text.substring('ASTRAL_CORE '.length).trim();
+          }
+        }
+      }
+    } catch (_) {}
+    finally {
+      sock?.close();
+    }
+    return null;
+  }
 
+  Future<void> _ensureReadyBody() async {
+    // 快速路径：已有客户端且仍可 ping。
     if (_client != null) {
       try {
         if (await _ping()) {
           _connected = true;
-          _statusMessage = '已连接 ${CoreHost.defaultListen}';
+          _statusMessage = '已连接 ${CoreHost.listenAddress}';
           return;
         }
       } catch (_) {}
       await _closeClient();
     }
 
-    Object? lastError;
-    if (await _tryConnect()) return;
-    lastError = _lastConnectError;
+    // UDP 服务发现：一次 UDP 往返 <1ms，比盲猜 TCP 快得多。
+    final discovered = await _udpDiscover();
+    if (discovered != null) {
+      _log.info(_module, '通过 UDP 发现内核: $discovered');
+      if (await _tryConnectTo(discovered)) return;
+    }
 
+    // 回退：直接尝试默认地址。
+    if (await _tryConnect()) return;
+    Object? lastError = _lastConnectError;
+
+    // 协议不匹配 → 用携带内核覆盖后重连。
     if (CoreHost.looksLikeProtocolMismatch(lastError ?? '')) {
-      final upgraded = await _tryUpgradeMismatchedService();
-      if (upgraded) {
-        for (var i = 0; i < 40; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 250));
-          if (await _tryConnect()) return;
-        }
+      _statusMessage = '正在用软件携带的内核更新服务';
+      if (await _core.repairIfProtocolMismatch()) {
+        if (await _waitForConnect(maxTries: 20, delayMs: 150)) return;
         lastError = _lastConnectError ?? lastError;
       }
     }
 
-    final binary = await _host.findBinary(null);
-    if (binary == null) {
+    if (await _host.findBinary() == null) {
       _connected = false;
-      _statusMessage = '未找到 astral-core，正在等待自动下载安装';
+      _statusMessage = '未找到随软件携带的 astral-core';
       _log.warn(_module, _statusMessage!);
       return;
     }
 
-    await _host.ensureRuntimeSidecars(nearProgram: binary);
-
+    // 确保有进程在监听。
     final bool launchedNow;
     try {
-      launchedNow = await _ensureProcess(binary);
+      launchedNow = await _core.ensureListenerRunning();
     } catch (e) {
       _connected = false;
       _statusMessage = '无法启动 astral-core: $e';
@@ -108,65 +140,30 @@ class ServiceKernelEngine implements KernelEngine {
       return;
     }
 
-    final tries = launchedNow ? 40 : 4;
-    for (var i = 0; i < tries; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (await _tryConnect()) return;
-      lastError = _lastConnectError ?? lastError;
+    if (await _waitForConnect(
+      maxTries: launchedNow ? 30 : 4,
+      delayMs: launchedNow ? 150 : 200,
+    )) {
+      return;
     }
+    lastError = _lastConnectError ?? lastError;
 
     _connected = false;
     _statusMessage = CoreHost.looksLikeProtocolMismatch(lastError ?? '')
-        ? '本机内核协议过旧，无法连接 ${CoreHost.defaultListen}。请更新 astral-core 服务'
-        : '无法连接到 ${CoreHost.defaultListen}';
+        ? '本机内核协议过旧，无法连接 ${CoreHost.listenAddress}。请在设置中同步内核版本'
+        : '无法连接到 ${CoreHost.listenAddress}';
     _log.warn(_module, _statusMessage!);
   }
 
-  /// 已安装则 `service start`；未安装才临时拉起，避免双开。
-  /// 返回是否在这次调用里新拉起了进程（需要稍等 JSON-RPC 就绪）。
-  Future<bool> _ensureProcess(String binary) async {
-    final installState = await _host.queryInstallState();
-    switch (installState) {
-      case CoreInstallState.running:
-        _log.info(_module, '内核服务已在运行');
-        return false;
-      case CoreInstallState.stopped:
-        final started = await _host.startService(binary: binary);
-        if (!started.ok && !CoreHost.looksLikeAlreadyRunning(started)) {
-          throw StateError(
-            started.output.isEmpty ? '无法启动已安装的内核服务' : started.output,
-          );
-        }
-        _log.info(_module, '已启动内核服务');
-        return true;
-      case CoreInstallState.unknown:
-        final started = await _host.startService(binary: binary);
-        if (started.ok || CoreHost.looksLikeAlreadyRunning(started)) {
-          _log.info(_module, '已启动内核服务');
-          return true;
-        }
-        if (!CoreHost.looksLikeNotInstalled(started)) {
-          _log.warn(_module, '启动服务失败: ${started.output}');
-          return false;
-        }
-        await _host.stopDetachedListener(CoreHost.defaultListen);
-        await _host.spawnDetached(
-          binary: binary,
-          listen: CoreHost.defaultListen,
-        );
-        _log.info(_module, '服务未安装，已临时拉起: $binary');
-        return true;
-      case CoreInstallState.notInstalled:
-        await _host.stopDetachedListener(CoreHost.defaultListen);
-        await _host.spawnDetached(
-          binary: binary,
-          listen: CoreHost.defaultListen,
-        );
-        _log.info(_module, '未安装系统服务，已临时拉起: $binary');
-        return true;
-      case CoreInstallState.missingBinary:
-        return false;
+  Future<bool> _waitForConnect({
+    required int maxTries,
+    int delayMs = 150,
+  }) async {
+    for (var i = 0; i < maxTries; i++) {
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+      if (await _tryConnect()) return true;
     }
+    return false;
   }
 
   Future<bool> _ping([CoreRpcClient? client]) async {
@@ -176,45 +173,20 @@ class ServiceKernelEngine implements KernelEngine {
     return res is Map && res['ok'] == true;
   }
 
-  Future<bool> _tryUpgradeMismatchedService() async {
-    final upgrade = await _host.materializeBundledProgram();
-    if (upgrade == null) {
-      _log.warn(_module, '本机内核协议不匹配，且未找到随软件携带的 astral-core');
-      return false;
-    }
-    final current = _host.currentProgramPath();
-    if (File(current).existsSync() &&
-        await _host.binariesMatch(upgrade, current)) {
-      _log.warn(_module, '携带内核与已安装文件相同，无法用复制修复协议不匹配');
-      return false;
-    }
-    _log.info(_module, '协议不匹配，正在用携带的内核更新服务: $upgrade');
-    _statusMessage = '正在用软件携带的内核更新服务';
-    final result = await _host.updateService(
-      newProgram: upgrade,
-      binary: upgrade,
-    );
-    if (!result.ok) {
-      _log.warn(_module, '更新内核服务失败: ${result.output}');
-      return false;
-    }
-    _log.info(_module, '内核服务已更新');
-    await _host.ensureRuntimeSidecars(nearProgram: upgrade);
-    return true;
-  }
+  Future<bool> _tryConnect() => _tryConnectTo(CoreHost.listenAddress);
 
-  Future<bool> _tryConnect() async {
+  Future<bool> _tryConnectTo(String target) async {
     await _closeClient();
     _lastConnectError = null;
     final client = CoreRpcClient(
-      target: CoreHost.defaultListen,
-      timeout: const Duration(seconds: 30),
+      target: target,
+      timeout: const Duration(seconds: 5),
     );
     try {
       if (await _ping(client)) {
         _client = client;
         _connected = true;
-        _statusMessage = '已连接 ${CoreHost.defaultListen}';
+        _statusMessage = '已连接 $target';
         _log.info(_module, _statusMessage!);
         return true;
       }
@@ -294,7 +266,10 @@ class ServiceKernelEngine implements KernelEngine {
           summary['running'] == true ||
           state == 'running' ||
           state == 'starting';
-      return KernelInstanceInspect(running: up);
+      return KernelInstanceInspect(
+        running: up,
+        startedAt: parseKernelStartedAt(summary['started_at_unix_ms']),
+      );
     } catch (_) {
       return const KernelInstanceInspect();
     }
@@ -325,6 +300,34 @@ class ServiceKernelEngine implements KernelEngine {
   }
 
   @override
+  Future<List<KernelLogEvent>> recentCoreLogs({
+    int after = 0,
+    int limit = 500,
+    String? instanceId,
+  }) async {
+    final params = <String, dynamic>{
+      'after': after,
+      'limit': limit,
+      if (instanceId != null && instanceId.trim().isNotEmpty)
+        'instance_id': instanceId.trim(),
+    };
+    final res = await _requireClient.call('logs.recent', params: params);
+    final map = _asMap(res);
+    final lines = map['lines'] as List? ?? const [];
+    return [
+      for (final raw in lines)
+        KernelLogEvent(
+          instanceId: '${_asMap(raw)['instance_id'] ?? ''}',
+          message: _formatLogLine(
+            '${_asMap(raw)['level'] ?? ''}',
+            '${_asMap(raw)['target'] ?? ''}',
+            '${_asMap(raw)['message'] ?? ''}',
+          ),
+        ),
+    ];
+  }
+
+  @override
   Stream<KernelLogEvent> subscribeCoreLogs() async* {
     var after = 0;
     while (_connected) {
@@ -351,6 +354,7 @@ class ServiceKernelEngine implements KernelEngine {
       } catch (e) {
         if (!_isExpectedLogSubscribeGap(e)) {
           _log.warn(_module, '无法订阅内核日志: $e');
+          break;
         }
       }
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -372,6 +376,7 @@ class ServiceKernelEngine implements KernelEngine {
           KernelRunningInstance(
             instanceId: '${_asMap(raw)['instance_id'] ?? ''}',
             sourcePath: '${_asMap(raw)['source_path'] ?? ''}',
+            startedAt: parseKernelStartedAt(_asMap(raw)['started_at_unix_ms']),
           ),
     ];
   }

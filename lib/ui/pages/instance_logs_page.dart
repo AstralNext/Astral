@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:astral/data/services/log_service.dart';
+import 'package:astral/data/state/instance_runtime_store.dart';
 import 'package:astral/di.dart';
 import 'package:astral/ui/widgets/astral_confirm_dialog.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +32,27 @@ class _InstanceLogsPageState extends State<InstanceLogsPage> {
     _logService = getIt<LogService>();
     _logs = _logService.getHistoryForInstance(widget.instancePath);
     _subscription = _logService.stream.listen(_onNewLog);
+    _importKernelHistory();
+  }
+
+  Future<void> _importKernelHistory() async {
+    if (!getIt.isRegistered<InstanceRuntimeStore>()) return;
+    final store = getIt<InstanceRuntimeStore>();
+    final instanceId = store.getInstanceId(widget.instancePath);
+    if (instanceId == null || instanceId.isEmpty) return;
+    await _subscription?.cancel();
+    await store.importKernelLogsForInstance(
+      instancePath: widget.instancePath,
+      instanceId: instanceId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _logs
+        ..clear()
+        ..addAll(_logService.getHistoryForInstance(widget.instancePath));
+    });
+    _subscription = _logService.stream.listen(_onNewLog);
+    _scrollToBottom();
   }
 
   @override

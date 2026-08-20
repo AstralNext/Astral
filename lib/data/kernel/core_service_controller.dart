@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
-import 'package:astral/data/kernel/core_update_service.dart';
 import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/kernel/kernel_mode.dart';
 import 'package:astral/data/services/app_settings_service.dart';
@@ -9,20 +8,18 @@ import 'package:astral/data/services/log_service.dart';
 import 'package:get_it/get_it.dart';
 import 'package:signals/signals.dart';
 
-/// 桌面内核服务的安装 / 启停 / 自启 / 更新。
+/// 桌面内核服务：安装 / 启停 / 用软件携带的内核同步。
 class CoreServiceController {
   CoreServiceController({
     required CoreHost host,
-    required CoreUpdateService updater,
     required AppSettingsService settings,
     required LogService log,
   }) : _host = host,
-       _updater = updater,
        _settings = settings,
        _log = log;
 
+  CoreHost get host => _host;
   final CoreHost _host;
-  final CoreUpdateService _updater;
   final AppSettingsService _settings;
   final LogService _log;
 
@@ -30,18 +27,17 @@ class CoreServiceController {
 
   final state = signal(CoreInstallState.unknown);
   final version = signal('');
-  final latestVersion = signal<String?>(null);
   final bundledDiffers = signal(false);
   final busy = signal(false);
   final lastMessage = signal<String?>(null);
 
-  late final hasUpdate = computed(() => bundledDiffers.value);
+  var _environmentRepairDone = false;
 
   Future<void> refresh() async {
     try {
       final next = await _host.queryInstallState();
       state.value = next;
-      final binary = await _host.findBinary(null);
+      final binary = await _host.findBinary();
       version.value = (await _host.readVersion(binary)) ?? '';
       bundledDiffers.value = await _bundledDiffersFromCurrent();
     } catch (e) {
@@ -58,10 +54,17 @@ class CoreServiceController {
     return !await _host.binariesMatch(bundled.path, current.path);
   }
 
-  /// 启动时：用软件携带的内核对比已安装服务，不同则复制进去。
-  /// [allowElevate] 为 false 时不安装/覆盖，避免启动瞬间弹出 UAC。
+  /// 启动时：体检 → 必要时 UAC 修复 → 同步携带内核 → 启动服务。
+  /// [allowElevate] 为 false 时仅刷新状态，完整流程留到窗口就绪后执行。
   Future<void> ensureProvisioned({bool allowElevate = true}) async {
     try {
+      if (!allowElevate) {
+        await refresh();
+        return;
+      }
+
+      await _ensureEnvironmentHealthy(allowElevate: true);
+
       final bundled = await _host.materializeBundledProgram();
       if (bundled != null) {
         await _host.ensureRuntimeSidecars(nearProgram: bundled);
@@ -69,42 +72,71 @@ class CoreServiceController {
       await refresh();
 
       if (_settings.getCoreServiceOptOut()) {
-        if (state.value == CoreInstallState.stopped) {
-          lastMessage.value = await start();
-        }
+        await _startIfStopped();
         return;
       }
 
       if (bundled == null) {
-        if (state.value == CoreInstallState.stopped) {
-          lastMessage.value = await start();
-        } else if (!state.value.isInstalled) {
+        await _startIfStopped();
+        if (!state.value.isInstalled) {
           lastMessage.value = '未找到随软件携带的 astral-core';
           _log.warn(_module, lastMessage.value!);
         }
         return;
       }
 
-      final current = _host.currentProgramPath();
-      final installed = state.value.isInstalled;
-      final currentMissing = !File(current).existsSync();
-      final differs =
-          currentMissing || !await _host.binariesMatch(bundled, current);
-
-      if (!installed || differs) {
-        if (!allowElevate) return;
-        lastMessage.value = await syncFromBundled(program: bundled);
+      if (!state.value.isInstalled || bundledDiffers.value) {
+        lastMessage.value = await _guard(
+          () => _syncBundledUnlocked(program: bundled),
+        );
         return;
       }
 
-      await _copySidecars(bundled);
-      if (state.value == CoreInstallState.stopped) {
-        lastMessage.value = await start();
-      }
+      await _host.ensureRuntimeSidecars(nearProgram: bundled);
+      await _startIfStopped();
     } catch (e) {
       _log.warn(_module, '自动准备内核失败: $e');
       lastMessage.value = '$e';
     }
+  }
+
+  Future<void> _startIfStopped() async {
+    if (state.value != CoreInstallState.stopped) return;
+    lastMessage.value = await start();
+  }
+
+  /// 自动修复 legacy 服务/目录/登记；需要时通过 UAC 提权卸载旧服务。
+  Future<bool> _ensureEnvironmentHealthy({required bool allowElevate}) async {
+    if (!allowElevate) return false;
+    if (_environmentRepairDone) {
+      final report = await _host.serviceDoctor();
+      return report?.needsRepair != true;
+    }
+
+    final report = await _host.serviceDoctor();
+    if (report == null || !report.needsRepair) {
+      _environmentRepairDone = true;
+      return true;
+    }
+
+    _log.info(_module, '正在自动修复服务环境…');
+    final repair = await _host.serviceRepair(
+      migrateLegacyData: true,
+      elevateIfNeeded: true,
+    );
+    _environmentRepairDone = true;
+
+    final after = await _host.serviceDoctor();
+    if (after?.needsRepair == true) {
+      _log.warn(_module, '仍有待处理项: ${after!.issues.join(' · ')}');
+      return false;
+    }
+    if (repair?.changed == true) {
+      _log.info(_module, '服务环境已自动修复');
+    } else {
+      _log.info(_module, '服务环境已就绪');
+    }
+    return true;
   }
 
   Future<String> _guard(
@@ -128,8 +160,6 @@ class CoreServiceController {
     }
   }
 
-  bool get _wantPrerelease => _settings.getUpdateBetaChannel();
-
   Future<void> _reconnectEngine() async {
     if (!GetIt.I.isRegistered<KernelEngine>()) return;
     final engine = GetIt.I<KernelEngine>();
@@ -145,12 +175,11 @@ class CoreServiceController {
   Future<bool> _okOrNowInstalled(CoreCliResult result) async {
     if (result.ok) return true;
     if (!Platform.isWindows) return false;
-    final next = await _host.queryInstallState();
-    return next.isInstalled;
+    return (await _host.queryInstallState()).isInstalled;
   }
 
   Future<String> start() => _guard(() async {
-    final binary = await _host.findBinary(null);
+    final binary = await _host.findBinary();
     if (binary == null) {
       throw StateError('未找到 astral-core，请先安装服务');
     }
@@ -164,52 +193,41 @@ class CoreServiceController {
     return '内核服务已启动';
   }, reconnect: true);
 
-  Future<String> stop() => _guard(() async {
-    final r = await _host.stopService(binary: await _host.findBinary(null));
-    if (!r.ok) throw StateError(r.output.isEmpty ? '停止失败' : r.output);
-    return '内核服务已停止';
-  });
+  /// 用 GUI 携带的内核安装或覆盖系统服务。
+  Future<String> syncFromBundled({String? program}) => _guard(
+    () => _syncBundledUnlocked(program: program),
+    reconnect: true,
+  );
 
-  Future<String> install({String? program}) => _guard(() async {
-    return _installUnlocked(program: program);
-  }, reconnect: true);
+  Future<String> install({String? program}) => syncFromBundled(program: program);
 
-  Future<String> _installUnlocked({String? program}) async {
-    final binary = program ?? await _host.materializeBundledProgram();
-    if (binary == null) {
-      throw StateError('未找到随软件携带的 astral-core');
-    }
-    await _settings.setCoreServiceOptOut(false);
-    if (state.value == CoreInstallState.notInstalled ||
-        state.value == CoreInstallState.missingBinary) {
-      await _host.stopDetachedListener(CoreHost.defaultListen);
-    }
-    final r = await _host.installService(
-      binary: binary,
-      listen: CoreHost.defaultListen,
-    );
-    if (!await _okOrNowInstalled(r)) {
-      throw StateError(r.output.isEmpty ? '安装失败' : r.output);
-    }
-    await _copySidecars(binary);
-    return '已安装内核服务并开机自启';
-  }
+  Future<String> _syncBundledUnlocked({String? program}) async {
+    await _ensureEnvironmentHealthy(allowElevate: true);
 
-  /// 用 GUI 旁边携带的内核安装或覆盖系统服务。
-  Future<String> syncFromBundled({String? program}) => _guard(() async {
     final bundled = program ?? await _host.materializeBundledProgram();
     if (bundled == null) {
       throw StateError('未找到随软件携带的 astral-core');
     }
     await _host.ensureRuntimeSidecars(nearProgram: bundled);
-    final latestState = await _host.queryInstallState(configured: bundled);
+
+    final latestState = await _host.queryInstallState();
     if (!latestState.isInstalled) {
-      return _installUnlocked(program: bundled);
+      await _settings.setCoreServiceOptOut(false);
+      if (latestState == CoreInstallState.notInstalled ||
+          latestState == CoreInstallState.missingBinary) {
+        await _host.stopDetachedListener();
+      }
+      final r = await _host.installService(binary: bundled);
+      if (!await _okOrNowInstalled(r)) {
+        throw StateError(r.output.isEmpty ? '安装失败' : r.output);
+      }
+      await _host.ensureRuntimeSidecars(nearProgram: bundled);
+      return '已安装内核服务并开机自启';
     }
+
     final current = _host.currentProgramPath();
     if (File(current).existsSync() &&
         await _host.binariesMatch(bundled, current)) {
-      await _copySidecars(bundled);
       if (latestState == CoreInstallState.stopped) {
         final started = await _host.startService(binary: bundled);
         if (!started.ok && !CoreHost.looksLikeAlreadyRunning(started)) {
@@ -218,121 +236,95 @@ class CoreServiceController {
       }
       return '内核已与软件携带版本一致';
     }
+
     final r = await _host.updateService(newProgram: bundled, binary: bundled);
     if (!r.ok && Platform.isWindows) {
-      final after = await _host.queryInstallState(configured: bundled);
-      if (!after.isInstalled) {
+      if (!(await _host.queryInstallState()).isInstalled) {
         throw StateError(r.output.isEmpty ? '更新失败' : r.output);
       }
     } else if (!r.ok) {
       throw StateError(r.output.isEmpty ? '更新失败' : r.output);
     }
-    await _copySidecars(bundled);
+    await _host.ensureRuntimeSidecars(nearProgram: bundled);
     return '已用软件携带的内核更新服务';
-  }, reconnect: true);
+  }
+
+  /// 连接失败且像旧协议时，用携带内核覆盖服务。
+  Future<bool> repairIfProtocolMismatch() async {
+    if (busy.value) return false;
+    try {
+      final bundled = await _host.materializeBundledProgram();
+      if (bundled == null) {
+        _log.warn(_module, '协议不匹配，且未找到随软件携带的 astral-core');
+        return false;
+      }
+      final current = _host.currentProgramPath();
+      if (File(current).existsSync() &&
+          await _host.binariesMatch(bundled, current)) {
+        _log.warn(_module, '携带内核与已安装文件相同，无法用复制修复协议不匹配');
+        return false;
+      }
+      _log.info(_module, '协议不匹配，正在用携带的内核更新服务: $bundled');
+      await _syncBundledUnlocked(program: bundled);
+      await refresh();
+      return true;
+    } catch (e) {
+      _log.warn(_module, '更新内核服务失败: $e');
+      return false;
+    }
+  }
+
+  /// 保证 JSON-RPC 端口有进程在听。
+  /// 返回本次是否新启动了进程（需多等一会再 ping）。
+  Future<bool> ensureListenerRunning() async {
+    final binary = await _host.findBinary();
+    if (binary == null) return false;
+    await _host.ensureRuntimeSidecars(nearProgram: binary);
+
+    final installState = await _host.queryInstallState();
+    switch (installState) {
+      case CoreInstallState.running:
+        _log.info(_module, '内核服务已在运行');
+        return false;
+      case CoreInstallState.stopped:
+        final started = await _host.startService(binary: binary);
+        if (!started.ok && !CoreHost.looksLikeAlreadyRunning(started)) {
+          throw StateError(
+            started.output.isEmpty ? '无法启动已安装的内核服务' : started.output,
+          );
+        }
+        _log.info(_module, '已启动内核服务');
+        return true;
+      case CoreInstallState.unknown:
+        final started = await _host.startService(binary: binary);
+        if (started.ok || CoreHost.looksLikeAlreadyRunning(started)) {
+          _log.info(_module, '已启动内核服务');
+          return true;
+        }
+        if (!CoreHost.looksLikeNotInstalled(started)) {
+          _log.warn(_module, '启动服务失败: ${started.output}');
+          return false;
+        }
+        await _host.stopDetachedListener();
+        await _host.spawnDetached(binary: binary);
+        _log.info(_module, '服务未安装，已临时拉起: $binary');
+        return true;
+      case CoreInstallState.notInstalled:
+        await _host.stopDetachedListener();
+        await _host.spawnDetached(binary: binary);
+        _log.info(_module, '未安装系统服务，已临时拉起: $binary');
+        return true;
+      case CoreInstallState.missingBinary:
+        return false;
+    }
+  }
 
   Future<String> uninstall() => _guard(() async {
     await _settings.setCoreServiceOptOut(true);
-    final r = await _host.uninstallService(
-      binary: await _host.findBinary(null),
-    );
+    final r = await _host.uninstallService(binary: await _host.findBinary());
     if (r.ok) return '已卸载系统服务';
     await refresh();
     if (!state.value.isInstalled) return '已卸载系统服务';
     throw StateError(r.output.isEmpty ? '卸载失败' : r.output);
   });
-
-  /// 未安装则用携带的内核安装，已安装则卸载。
-  Future<String> toggleInstall() {
-    if (state.value.isInstalled) return uninstall();
-    return install();
-  }
-
-  Future<String> downloadLatest() => _guard(() async {
-    final exe = await _downloadLatestUnlocked();
-    return '已下载内核到 $exe';
-  });
-
-  Future<String> _downloadLatestUnlocked() async {
-    final release = await _updater.fetchLatest(
-      includePrereleases: _wantPrerelease,
-    );
-    if (release == null) {
-      throw StateError('无法获取当前平台的 astral-core 发行包');
-    }
-    final exe = await _updater.downloadRelease(release);
-    latestVersion.value = release.version;
-    await _updater.copySidecarsNextTo(exe);
-    return exe;
-  }
-
-  Future<String> downloadAndInstall() => install();
-
-  Future<String> checkUpdate({bool applyIfNewer = false}) async {
-    final current = version.value;
-    final release = await _updater.fetchLatest(
-      includePrereleases: _wantPrerelease,
-    );
-    if (release == null) {
-      throw StateError('无法获取 astral-core 发行版');
-    }
-    latestVersion.value = release.version;
-    if (!_updater.isNewer(release.version, current)) {
-      return '内核已是最新 ${release.version}';
-    }
-    if (!applyIfNewer) {
-      return '发现内核新版本 ${release.version}';
-    }
-    if (!state.value.isInstalled && _settings.getCoreServiceOptOut()) {
-      return '发现内核新版本 ${release.version}（未安装服务，未自动安装）';
-    }
-    return applyUpdate(release);
-  }
-
-  Future<String> applyUpdate([CoreReleaseInfo? known]) => _guard(() async {
-    final release =
-        known ??
-        await _updater.fetchLatest(includePrereleases: _wantPrerelease);
-    if (release == null) {
-      throw StateError('无法获取 astral-core 发行版');
-    }
-    latestVersion.value = release.version;
-    if (!_updater.isNewer(release.version, version.value) &&
-        state.value.isInstalled) {
-      return '内核已是最新 ${release.version}';
-    }
-    final exe = await _updater.downloadRelease(release);
-    await _settings.setCoreServiceOptOut(false);
-    final latestState = await _host.queryInstallState(configured: exe);
-    if (latestState == CoreInstallState.notInstalled ||
-        latestState == CoreInstallState.missingBinary) {
-      await _host.stopDetachedListener(CoreHost.defaultListen);
-    }
-    if (latestState.isInstalled) {
-      final r = await _host.updateService(newProgram: exe, binary: exe);
-      if (!r.ok && Platform.isWindows) {
-        final after = await _host.queryInstallState(configured: exe);
-        if (!after.isInstalled) {
-          throw StateError(r.output.isEmpty ? '更新失败' : r.output);
-        }
-      } else if (!r.ok) {
-        throw StateError(r.output.isEmpty ? '更新失败' : r.output);
-      }
-    } else {
-      final r = await _host.installService(
-        binary: exe,
-        listen: CoreHost.defaultListen,
-      );
-      if (!await _okOrNowInstalled(r)) {
-        throw StateError(r.output.isEmpty ? '安装失败' : r.output);
-      }
-    }
-    await _copySidecars(exe);
-    return '内核已更新到 ${release.version}';
-  }, reconnect: true);
-
-  Future<void> _copySidecars(String exe) async {
-    await _updater.copySidecarsNextTo(exe);
-    await _updater.copySidecarsNextTo(_host.currentProgramPath());
-  }
 }

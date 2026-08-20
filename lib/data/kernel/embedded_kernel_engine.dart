@@ -6,6 +6,7 @@ class EmbeddedKernelEngine implements KernelEngine {
   EmbeddedKernelEngine(this._p2p);
 
   final P2PService _p2p;
+  final _startedAtByInstanceId = <String, DateTime>{};
   var _connected = false;
   String? _statusMessage;
 
@@ -36,25 +37,45 @@ class EmbeddedKernelEngine implements KernelEngine {
     required String configToml,
     required String sourcePath,
     String? name,
-  }) {
-    return _p2p.createInstance(configToml: configToml, watchEvent: true);
+  }) async {
+    final id = await _p2p.createInstance(
+      configToml: configToml,
+      watchEvent: true,
+    );
+    _startedAtByInstanceId[id] = DateTime.now();
+    return id;
   }
 
   @override
-  Future<void> closeInstance(String instanceId) =>
-      _p2p.closeInstance(instanceId);
+  Future<void> closeInstance(String instanceId) async {
+    _startedAtByInstanceId.remove(instanceId);
+    await _p2p.closeInstance(instanceId);
+  }
 
   @override
   Future<bool> isRunning(String instanceId) =>
       _p2p.isEasytierRunning(instanceId);
 
   @override
-  Future<KernelInstanceInspect> inspectInstance(String instanceId) async =>
-      KernelInstanceInspect(running: await isRunning(instanceId));
+  Future<KernelInstanceInspect> inspectInstance(String instanceId) async {
+    final running = await isRunning(instanceId);
+    return KernelInstanceInspect(
+      running: running,
+      startedAt: _startedAtByInstanceId[instanceId],
+    );
+  }
 
   @override
   Future<KVNetworkStatus> getNetworkStatus(String instanceId) =>
       _p2p.getNetworkStatus(instanceId);
+
+  @override
+  Future<List<KernelLogEvent>> recentCoreLogs({
+    int after = 0,
+    int limit = 500,
+    String? instanceId,
+  }) async =>
+      const [];
 
   @override
   Stream<KernelLogEvent> subscribeCoreLogs() {
@@ -64,11 +85,25 @@ class EmbeddedKernelEngine implements KernelEngine {
   }
 
   @override
-  Future<List<KernelRunningInstance>> listRunning() async => const [];
+  Future<List<KernelRunningInstance>> listRunning() async {
+    final out = <KernelRunningInstance>[];
+    for (final entry in _startedAtByInstanceId.entries) {
+      if (!await isRunning(entry.key)) continue;
+      out.add(
+        KernelRunningInstance(
+          instanceId: entry.key,
+          sourcePath: '',
+          startedAt: entry.value,
+        ),
+      );
+    }
+    return out;
+  }
 
   @override
   Future<void> dispose() async {
     _connected = false;
+    _startedAtByInstanceId.clear();
     _p2p.dispose();
   }
 }

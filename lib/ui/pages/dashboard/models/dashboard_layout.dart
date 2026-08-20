@@ -126,7 +126,7 @@ class DashboardLayout {
         _w('nodes', order: 7),
         _w('duplex', order: 8),
         _w('logs', order: 9),
-        _w(peerInfoType, widthSpan: 4, heightSpan: 2, order: 10),
+        _w(peerInfoType, widthSpan: 2, heightSpan: 2, order: 10),
       ];
 
   /// 默认启用：流量、连接质量、内核、快捷入口。

@@ -150,19 +150,23 @@ class InstanceConnectionService {
         return false;
       }
 
-      final id = await _launch(path, configToml, name);
-      if (id == null) return false;
+      final launched = await _launch(path, configToml, name);
+      if (launched == null) return false;
 
-      _runtimeStore.setRunning(path, id);
+      _runtimeStore.setRunning(
+        path,
+        launched.id,
+        startedAt: launched.startedAt,
+      );
       _log.info(_module, '已启动: ${name ?? path}', instancePath: path);
 
       if (vpn != null) {
         final epoch = _vpnEpoch;
-        final vpnOk = await _attachVpn(path, id, configToml, epoch);
+        final vpnOk = await _attachVpn(path, launched.id, configToml, epoch);
         // 仅「需要挂 TUN 却失败」才停实例；无静态 IP 时故意跳过 VPN，实例继续跑。
         if (!vpnOk &&
             epoch == _vpnEpoch &&
-            _runtimeStore.getInstanceId(path) == id) {
+            _runtimeStore.getInstanceId(path) == launched.id) {
           _log.warn(_module, 'VPN 未就绪，已停止实例', instancePath: path);
           await _stop(path: path, name: name);
           return false;
@@ -180,9 +184,14 @@ class InstanceConnectionService {
     }
   }
 
-  Future<String?> _launch(String path, String configToml, String? name) async {
+  Future<({String id, DateTime? startedAt})?> _launch(
+    String path,
+    String configToml,
+    String? name,
+  ) async {
     String? id;
     var ok = false;
+    DateTime? startedAt;
     try {
       id = await _engine.createInstance(
         configToml: configToml,
@@ -207,7 +216,8 @@ class InstanceConnectionService {
         }
         if (probe.running) {
           ok = true;
-          return id;
+          startedAt = probe.startedAt;
+          return (id: id, startedAt: startedAt);
         }
       }
       _log.error(_module, '启动失败: 未进入运行', instancePath: path);

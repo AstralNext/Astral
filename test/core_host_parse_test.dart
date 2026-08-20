@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
-import 'package:astral/data/kernel/core_update_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -10,13 +9,13 @@ void main() {
     test('parses service status lines', () {
       expect(
         parseInstallState(
-          'running (qualified=dev.astral.core-default script=astral-core-default)',
+          'running (qualified=dev.astral.core script=astral-core)',
         ),
         CoreInstallState.running,
       );
       expect(parseInstallState('stopped'), CoreInstallState.stopped);
       expect(
-        parseInstallState('not-installed (qualified=dev.astral.core-default)'),
+        parseInstallState('not-installed (qualified=dev.astral.core)'),
         CoreInstallState.notInstalled,
       );
       expect(parseInstallState(''), CoreInstallState.unknown);
@@ -51,30 +50,18 @@ void main() {
     });
   });
 
-  group('CoreHost assets', () {
-    test('release asset name matches platform prefix', () {
-      final name = CoreHost.releaseAssetName();
-      expect(name, startsWith('astral-core-'));
-      expect(
-        name.contains('windows') ||
-            name.contains('linux') ||
-            name.contains('macos'),
-        isTrue,
-      );
+  group('CoreHost defaults', () {
+    test('listens on loopback', () {
+      expect(CoreHost.listenAddress, '127.0.0.1:50051');
     });
 
-    test('listens on loopback by default', () {
-      expect(CoreHost.defaultListen, '127.0.0.1:50051');
+    test('uses fixed service name', () {
+      expect(CoreHost.serviceQualifiedName, 'dev.astral.core');
     });
-  });
 
-  group('CoreUpdateService.isNewer', () {
-    test('empty current counts as needing install', () {
-      final svc = CoreUpdateService(CoreHost());
-      expect(svc.isNewer('v1.0.0', null), isTrue);
-      expect(svc.isNewer('v1.0.0', ''), isTrue);
-      expect(svc.isNewer('v1.0.1', '1.0.0'), isTrue);
-      expect(svc.isNewer('v1.0.0', '1.0.0'), isFalse);
+    test('lists windows sidecars', () {
+      expect(CoreHost.windowsSidecars, contains('wintun.dll'));
+      expect(CoreHost.windowsSidecars, contains('Packet.dll'));
     });
   });
 
@@ -98,7 +85,7 @@ void main() {
       );
     });
 
-    test('detects gRPC connection reset as protocol mismatch', () {
+    test('detects protocol mismatch resets', () {
       expect(
         CoreHost.looksLikeProtocolMismatch(
           'ClientException with SocketException: Write failed '
@@ -107,13 +94,6 @@ void main() {
         isTrue,
       );
       expect(CoreHost.looksLikeProtocolMismatch('timeout'), isFalse);
-    });
-  });
-
-  group('Windows sidecars', () {
-    test('lists wintun and Packet', () {
-      expect(CoreHost.windowsSidecars, contains('wintun.dll'));
-      expect(CoreHost.windowsSidecars, contains('Packet.dll'));
     });
   });
 
