@@ -57,3 +57,4 @@ app.*.map.json
 # CI / local packaging output
 /release/
 /release_installer/
+/_ci_dl/
