@@ -20,4 +20,6 @@ CI：见 `.github/workflows/build.yml`。
 
 ## Android 签名
 
-复制 `android/key.properties.example` → `android/key.properties`，配置本机 keystore（勿提交密钥）。
+与 AstralGame 相同：CI 从 GitHub Secrets 写出 `android/key.properties` 和 `upload-keystore.jks`。
+
+本地可复制 `android/key.properties.example` → `android/key.properties`（勿提交密钥）。
