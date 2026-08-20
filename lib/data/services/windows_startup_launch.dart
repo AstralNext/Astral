@@ -5,8 +5,19 @@ class WindowsStartupLaunch {
   WindowsStartupLaunch._();
 
   static const valueName = 'AstralNext';
+  static const minimizedArg = '--minimized';
   static const _runKey =
       r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
+
+  static bool argsRequestMinimized([List<String>? args]) {
+    final list = args ?? Platform.executableArguments;
+    return list.contains(minimizedArg);
+  }
+
+  static String runValue(String exe, {required bool startMinimized}) {
+    final quoted = '"$exe"';
+    return startMinimized ? '$quoted $minimizedArg' : quoted;
+  }
 
   static Future<bool> isEnabled() async {
     if (!Platform.isWindows) return false;
@@ -23,14 +34,19 @@ class WindowsStartupLaunch {
     }
   }
 
-  static Future<void> setEnabled(bool enabled) async {
+  static Future<void> setEnabled(
+    bool enabled, {
+    bool startMinimized = false,
+  }) async {
     if (!Platform.isWindows) return;
     if (enabled) {
-      final exe = Platform.resolvedExecutable;
-      final quoted = '"$exe"';
+      final command = runValue(
+        Platform.resolvedExecutable,
+        startMinimized: startMinimized,
+      );
       final r = await Process.run(
         'reg',
-        ['add', _runKey, '/v', valueName, '/t', 'REG_SZ', '/d', quoted, '/f'],
+        ['add', _runKey, '/v', valueName, '/t', 'REG_SZ', '/d', command, '/f'],
         runInShell: false,
       );
       if (r.exitCode != 0) {

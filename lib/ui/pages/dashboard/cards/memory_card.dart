@@ -1,6 +1,6 @@
 part of 'package:astral/ui/pages/dashboard_page.dart';
 
-/// 本进程内存占用（RSS）与短时走势。
+/// Dart 堆占用（对象 + external），不含引擎 / 内核 RSS。
 class _MemoryCard extends StatefulWidget {
   const _MemoryCard();
 
@@ -10,7 +10,7 @@ class _MemoryCard extends StatefulWidget {
 
 class _MemoryCardState extends State<_MemoryCard> {
   Timer? _timer;
-  int _rssBytes = 0;
+  int? _heapBytes;
   final List<double> _history = List<double>.filled(20, 0);
 
   @override
@@ -37,30 +37,36 @@ class _MemoryCardState extends State<_MemoryCard> {
   }
 
   void _sample() {
-    final rss = ProcessInfo.currentRss;
-    if (!mounted) return;
+    unawaited(_sampleAsync());
+  }
+
+  Future<void> _sampleAsync() async {
+    final bytes = await DartHeap.instance.sampleBytes();
+    if (!mounted || bytes == null) return;
     setState(() {
-      _rssBytes = rss;
+      _heapBytes = bytes;
       for (var i = 0; i < _history.length - 1; i++) {
         _history[i] = _history[i + 1];
       }
-      _history[_history.length - 1] = rss.toDouble();
+      _history[_history.length - 1] = bytes.toDouble();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final value = _heapBytes;
 
     return _DashboardCard(
       title: '内存信息',
       icon: Icons.memory_outlined,
+      subtitle: 'Dart',
       contentPadding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            Formatters.bytes(_rssBytes),
+            value == null ? '—' : Formatters.bytes(value),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

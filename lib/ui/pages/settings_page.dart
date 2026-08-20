@@ -76,11 +76,26 @@ class SettingsPage extends StatelessWidget {
                   Watch((context) {
                     return SwitchListTile(
                       secondary: const Icon(Icons.power_settings_new_outlined),
-                      title: const Text('登录时打开客户端'),
-                      subtitle: const Text('登录 Windows 后自动打开 Astral 界面'),
+                      title: const Text('登录时启动'),
+                      subtitle: const Text('登录 Windows 后自动打开 Astral'),
                       value: settingsState.launchAtStartup.value,
                       onChanged: (v) =>
                           _setLaunchAtStartup(context, settingsState, v),
+                    );
+                  }),
+                  const AstralSettingsDivider(),
+                  Watch((context) {
+                    final login = settingsState.launchAtStartup.value;
+                    return SwitchListTile(
+                      secondary: const Icon(Icons.visibility_off_outlined),
+                      title: const Text('启动后最小化到托盘'),
+                      subtitle: Text(
+                        login ? '登录自动打开时不弹出窗口' : '先打开「登录时启动」后生效',
+                      ),
+                      value: login && settingsState.startMinimized.value,
+                      onChanged: login
+                          ? (v) => _setStartMinimized(context, settingsState, v)
+                          : null,
                     );
                   }),
                 ],
@@ -175,8 +190,32 @@ class SettingsPage extends StatelessWidget {
     bool enabled,
   ) async {
     try {
-      await WindowsStartupLaunch.setEnabled(enabled);
+      await WindowsStartupLaunch.setEnabled(
+        enabled,
+        startMinimized: settingsState.startMinimized.value,
+      );
       settingsState.launchAtStartup.value = enabled;
+      await settingsState.saveToPersistence();
+    } catch (e) {
+      if (context.mounted) {
+        showAstralSnack(context, '设置失败: $e');
+      }
+    }
+  }
+
+  Future<void> _setStartMinimized(
+    BuildContext context,
+    SettingsState settingsState,
+    bool enabled,
+  ) async {
+    try {
+      if (settingsState.launchAtStartup.value) {
+        await WindowsStartupLaunch.setEnabled(
+          true,
+          startMinimized: enabled,
+        );
+      }
+      settingsState.startMinimized.value = enabled;
       await settingsState.saveToPersistence();
     } catch (e) {
       if (context.mounted) {

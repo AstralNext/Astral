@@ -5,6 +5,7 @@ class AppSettingsService {
   static const String _keyAppThemeIndex = 'app_theme_index';
   static const String _keyCloseMinimize = 'close_minimize';
   static const String _keyLaunchAtStartup = 'launch_at_startup';
+  static const String _keyStartMinimized = 'start_minimized';
   static const String _keyAutoCheckUpdate = 'auto_check_update';
   static const String _keyUpdateBetaChannel = 'update_beta_channel';
   static const String _keyCoreServiceOptOut = 'core_service_opt_out';
@@ -28,6 +29,11 @@ class AppSettingsService {
 
   Future<void> setLaunchAtStartup(bool value) async =>
       await _prefs.setBool(_keyLaunchAtStartup, value);
+
+  bool getStartMinimized() => _prefs.getBool(_keyStartMinimized) ?? true;
+
+  Future<void> setStartMinimized(bool value) async =>
+      await _prefs.setBool(_keyStartMinimized, value);
 
   bool getAutoCheckUpdate() => _prefs.getBool(_keyAutoCheckUpdate) ?? true;
 

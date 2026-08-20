@@ -44,6 +44,7 @@ class ShellTrayController {
   }
 
   Future<void> showWindow() async {
+    await windowManager.setSkipTaskbar(false);
     await windowManager.show();
     await windowManager.focus();
   }

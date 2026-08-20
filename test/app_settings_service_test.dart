@@ -28,6 +28,10 @@ void main() {
       await settings.setLaunchAtStartup(true);
       expect(settings.getCloseMinimize(), isFalse);
       expect(settings.isLaunchAtStartup(), isTrue);
+      expect(settings.getStartMinimized(), isTrue);
+
+      await settings.setStartMinimized(false);
+      expect(settings.getStartMinimized(), isFalse);
     });
 
     test('persists core service opt-out', () async {

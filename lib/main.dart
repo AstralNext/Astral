@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:astral/data/services/windows_startup_launch.dart';
 import 'package:astral/di.dart';
 import 'package:astral/utils/single_instance_guard.dart';
 import 'package:flutter/material.dart';
@@ -33,7 +34,12 @@ Future<void> main() async {
   runApp(const AstralApp());
 
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-    await windowManager.show();
-    await windowManager.focus();
+    if (WindowsStartupLaunch.argsRequestMinimized()) {
+      await windowManager.setSkipTaskbar(true);
+      await windowManager.hide();
+    } else {
+      await windowManager.show();
+      await windowManager.focus();
+    }
   }
 }

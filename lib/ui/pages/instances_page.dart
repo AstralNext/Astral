@@ -231,6 +231,13 @@ class _InstancesPageState extends State<InstancesPage> {
           return const SizedBox.shrink();
         }
 
+        final headerActionStyle = IconButton.styleFrom(
+          backgroundColor: palette.background.computeLuminance() < 0.45
+              ? palette.accent
+              : Color.lerp(palette.accent, palette.textPrimary, 0.36),
+          foregroundColor: palette.onAccent,
+        );
+
         return Padding(
           padding: const EdgeInsets.fromLTRB(
             AppDimensions.pagePaddingH,
@@ -265,15 +272,17 @@ class _InstancesPageState extends State<InstancesPage> {
                       ],
                     ),
                   ),
-                  IconButton.filledTonal(
+                  IconButton.filled(
                     tooltip: '新建实例',
                     onPressed: _createInstance,
+                    style: headerActionStyle,
                     icon: const Icon(Icons.add),
                   ),
                   const SizedBox(width: 8),
-                  IconButton.filledTonal(
+                  IconButton.filled(
                     tooltip: '刷新',
                     onPressed: _refresh,
+                    style: headerActionStyle,
                     icon: const Icon(Icons.refresh),
                   ),
                 ],

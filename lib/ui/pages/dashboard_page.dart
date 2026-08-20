@@ -17,6 +17,7 @@ import 'package:astral/ui/pages/instance_peers_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/shell/shell_navigation_controller.dart';
 import 'package:astral/ui/widgets/dashboard_grid.dart';
+import 'package:astral/utils/dart_heap.dart';
 import 'package:astral/utils/formatters.dart';
 import 'package:astral_rust_core/astral_rust_core.dart' show KVNodeInfo;
 import 'package:flutter/material.dart';

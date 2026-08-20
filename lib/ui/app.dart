@@ -57,8 +57,10 @@ class _AstralAppState extends State<AstralApp> with WidgetsBindingObserver {
         theme: theme,
         themeAnimationDuration: AppThemeAnimation.duration,
         themeAnimationCurve: AppThemeAnimation.curve,
-        builder: (context, child) =>
-            ThemeWaterDropHost(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => DefaultTextStyle.merge(
+          style: AppFonts.apply(),
+          child: ThemeWaterDropHost(child: child ?? const SizedBox.shrink()),
+        ),
         home: const Shell(),
       );
     });

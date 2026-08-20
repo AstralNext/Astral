@@ -1,9 +1,11 @@
 import 'package:astral/config/app_dimensions.dart';
+import 'package:astral/config/app_fonts.dart';
 import 'package:astral/config/app_theme_id.dart';
 import 'package:astral/config/app_theme_palette.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+export 'app_fonts.dart';
 export 'app_theme_id.dart';
 export 'app_theme_palette.dart';
 
@@ -64,6 +66,7 @@ abstract final class AstralTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      fontFamily: AppFonts.family,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: page,
       canvasColor: page,
@@ -89,12 +92,12 @@ abstract final class AstralTheme {
         backgroundColor: page,
         foregroundColor: palette.textPrimary,
         systemOverlayStyle: overlayStyle,
-        titleTextStyle: TextStyle(
+        titleTextStyle: AppFonts.apply(TextStyle(
           fontSize: 17,
           fontWeight: FontWeight.w500,
           letterSpacing: 0.2,
           color: palette.textPrimary,
-        ),
+        )),
       ),
       cardTheme: CardThemeData(
         color: raised,
@@ -113,12 +116,12 @@ abstract final class AstralTheme {
         indicatorColor: palette.accent.withValues(alpha: 0.14),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return TextStyle(
+          return AppFonts.apply(TextStyle(
             fontSize: 11,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
             color: selected ? palette.accent : palette.textSecondary,
             letterSpacing: 0.1,
-          );
+          ));
         }),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
@@ -133,16 +136,16 @@ abstract final class AstralTheme {
         indicatorColor: palette.accent.withValues(alpha: 0.14),
         selectedIconTheme: IconThemeData(color: palette.accent),
         unselectedIconTheme: IconThemeData(color: palette.textTertiary),
-        selectedLabelTextStyle: TextStyle(
+        selectedLabelTextStyle: AppFonts.apply(TextStyle(
           color: palette.accent,
           fontWeight: FontWeight.w600,
           fontSize: 12,
-        ),
-        unselectedLabelTextStyle: TextStyle(
+        )),
+        unselectedLabelTextStyle: AppFonts.apply(TextStyle(
           color: palette.textSecondary,
           fontWeight: FontWeight.w400,
           fontSize: 12,
-        ),
+        )),
       ),
       iconTheme: IconThemeData(
         size: AppDimensions.iconSize,
@@ -201,8 +204,8 @@ abstract final class AstralTheme {
           borderRadius: BorderRadius.circular(AppDimensions.radiusSm),
           borderSide: BorderSide(color: palette.accent, width: 1.5),
         ),
-        labelStyle: TextStyle(color: palette.textSecondary),
-        hintStyle: TextStyle(color: palette.textTertiary),
+        labelStyle: AppFonts.apply(TextStyle(color: palette.textSecondary)),
+        hintStyle: AppFonts.apply(TextStyle(color: palette.textTertiary)),
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
@@ -217,7 +220,7 @@ abstract final class AstralTheme {
         }),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: palette.accent),
-      textTheme: TextTheme(
+      textTheme: AppFonts.applyTextTheme(TextTheme(
         displayLarge: TextStyle(
           fontSize: 48,
           fontWeight: FontWeight.w700,
@@ -266,7 +269,7 @@ abstract final class AstralTheme {
           letterSpacing: 0.3,
           color: palette.textSecondary,
         ),
-      ),
+      )),
     );
   }
 }
