@@ -194,9 +194,6 @@ jobs:
           New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
             -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
           choco install nasm --yes --no-progress
-          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          $env:Path = "$machinePath;$userPath"
           $nasmDir = 'C:\Program Files\NASM'
           if (Test-Path $nasmDir) {
             Add-Content -Path $env:GITHUB_PATH -Value $nasmDir
