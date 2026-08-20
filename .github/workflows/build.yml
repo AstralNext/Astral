@@ -156,63 +156,40 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Checkout astral-core
-        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
-        uses: actions/checkout@v5
-        with:
-          repository: AstralNext/astral-core
-          path: astral-core-src
-
-      - name: Install protoc
-        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Use vendored Npcap import lib (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $libDir = Join-Path $env:GITHUB_WORKSPACE "astral-core-src\ci\npcap\Lib\x64"
-          foreach ($name in @("Packet.lib", "Packet.dll")) {
-            if (!(Test-Path (Join-Path $libDir $name))) {
-              throw "$name not found in $libDir"
-            }
-          }
-          "LIB=$libDir;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $libDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Windows native build prerequisites
+      - name: Windows Cargokit fallback flags
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Add-Content -Path $env:GITHUB_ENV -Value "CARGOKIT_VERBOSE=1"
-          Add-Content -Path $env:GITHUB_ENV -Value "CARGO_BUILD_JOBS=2"
           New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
             -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
-          choco install nasm --yes --no-progress
-          $nasmDir = 'C:\Program Files\NASM'
-          if (Test-Path $nasmDir) {
-            Add-Content -Path $env:GITHUB_PATH -Value $nasmDir
-            $env:Path = "$nasmDir;$env:Path"
-          }
-          rustc -V
-          & protoc --version
-          Get-Command nasm -ErrorAction SilentlyContinue | Out-String | Write-Host
 
-      - name: Build bundled astral-core
+      - name: Download bundled astral-core
         if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
-        working-directory: astral-core-src
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release
-          if [ "${RUNNER_OS}" = "Windows" ]; then
-            echo "ASTRAL_CORE_EXE=${GITHUB_WORKSPACE}/astral-core-src/target/release/astral-core.exe" >> "$GITHUB_ENV"
+          mkdir -p bundled-core
+          if [ "${{ matrix.flutter_platform }}" = "windows" ]; then
+            asset="astral-core-windows-x86_64.exe"
+            dest="${GITHUB_WORKSPACE}/bundled-core/astral-core.exe"
           else
-            echo "ASTRAL_CORE_EXE=${GITHUB_WORKSPACE}/astral-core-src/target/release/astral-core" >> "$GITHUB_ENV"
+            asset="astral-core-linux-x86_64"
+            dest="${GITHUB_WORKSPACE}/bundled-core/astral-core"
           fi
+          tag=nightly
+          if ! gh release view "$tag" --repo AstralNext/astral-core >/dev/null 2>&1; then
+            echo "::warning::astral-core nightly is missing; falling back to GitHub Latest"
+            tag="$(gh release view --repo AstralNext/astral-core --json tagName --jq .tagName)"
+          fi
+          gh release view "$tag" --repo AstralNext/astral-core --json tagName,targetCommitish,publishedAt,isPrerelease
+          gh release download "$tag" --repo AstralNext/astral-core --pattern "$asset" --dir bundled-core
+          mv "bundled-core/$asset" "$dest"
+          chmod +x "$dest"
+          echo "ASTRAL_CORE_EXE=$dest" >> "$GITHUB_ENV"
+          ls -la bundled-core
 
       - name: Get dependencies
         run: flutter pub get
