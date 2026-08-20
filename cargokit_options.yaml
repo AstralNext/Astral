@@ -1,1 +1,3 @@
-use_precompiled_binaries: true
+# FFI 的 astral_rust_core 始终源码编译，不用 Cargokit 预编译 .so/.dll。
+# 与桌面 astral-core 系统服务无关（CI 仍下载 nightly）。
+use_precompiled_binaries: false
