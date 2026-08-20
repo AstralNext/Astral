@@ -12,8 +12,8 @@ import 'package:astral/di.dart';
 import 'package:astral/data/state/instance_runtime_store.dart';
 import 'package:astral/ui/pages/dashboard_page.dart';
 import 'package:astral/ui/pages/instances_page.dart';
+import 'package:astral/ui/pages/node_info_page.dart';
 import 'package:astral/ui/pages/settings_page.dart';
-import 'package:astral/ui/pages/tools_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/shell/shell_navigation_controller.dart';
 import 'package:astral/ui/shell/shell_title_bar.dart';
@@ -61,10 +61,10 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
         page: const InstancesPage(key: PageStorageKey('instances')),
       ),
       NavigationItem(
-        icon: Icons.build_outlined,
-        activeIcon: Icons.build,
-        label: '工具',
-        page: const ToolsPage(key: PageStorageKey('tools')),
+        icon: Icons.lan_outlined,
+        activeIcon: Icons.lan,
+        label: '节点信息',
+        page: const NodeInfoPage(key: PageStorageKey('node-info')),
       ),
       NavigationItem(
         icon: Icons.settings_outlined,
@@ -207,12 +207,12 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
     setState(() {});
   }
 
-  /// Dashboard / Instances / overlay：拉秒级流量指标。
-  /// 切到其它 Tab 只停指标采样，存活探测仍继续。
+  /// 面板 / 实例 / 节点信息 / overlay：拉秒级流量与节点指标。
+  /// 切到设置只停指标采样，存活探测仍继续。
   void _syncNetworkPolling() {
     if (!getIt.isRegistered<InstanceRuntimeStore>()) return;
     final need =
-        _navController.selectedIndex <= ShellTab.instances ||
+        _navController.selectedIndex <= ShellTab.nodeInfo ||
         _contentController.hasOverlay;
     getIt<InstanceRuntimeStore>().setPollingEnabled(need, forcePoll: need);
   }

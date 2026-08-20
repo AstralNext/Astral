@@ -79,7 +79,7 @@ class _CoreCardState extends State<_CoreCard> {
 
       return _DashboardCard(
         title: '内核',
-        subtitle: '内核版本',
+        icon: Icons.developer_board_outlined,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [row('软件', app), const SizedBox(height: 8), row('ET', et)],

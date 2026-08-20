@@ -40,4 +40,13 @@ void main() {
     expect(isPeerDirectConnection(_node(cost: 1, connType: 'p2p')), isTrue);
     expect(isPeerDirectConnection(_node(cost: 2, connType: 'relay')), isFalse);
   });
+
+  test('display name and latency labels', () {
+    final named = _node();
+    expect(peerDisplayName(named), 'n');
+    expect(peerLatencyLabel(named), '1 ms');
+
+    final local = _node(peerId: 0, cost: 0, connType: 'local');
+    expect(peerLatencyLabel(local), '本机');
+  });
 }

@@ -34,8 +34,11 @@ class _QualityCard extends StatelessWidget {
 
       return _DashboardCard(
         title: '连接质量',
-        subtitle: label,
-        trailing: Icon(Icons.network_check, size: 18, color: health),
+        icon: Icons.network_check,
+        trailing: Text(
+          label,
+          style: TextStyle(color: health, fontSize: 11, fontWeight: FontWeight.w600),
+        ),
         child: Row(
           children: [
             Expanded(

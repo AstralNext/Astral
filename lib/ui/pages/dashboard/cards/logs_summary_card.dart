@@ -86,9 +86,10 @@ class _LogsSummaryCardState extends State<_LogsSummaryCard> {
             ),
           );
         },
-        borderRadius: BorderRadius.circular(AppDimensions.radiusMd),
+        borderRadius: BorderRadius.circular(AppDimensions.radiusLg),
         child: _DashboardCard(
           title: '日志摘要',
+          icon: Icons.article_outlined,
           subtitle: recent.isEmpty ? '暂无告警' : '${recent.length} 条近期',
           trailing: Icon(
             Icons.chevron_right,

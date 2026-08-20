@@ -60,6 +60,7 @@ class _PeerInfoCard extends StatelessWidget {
 
       return _DashboardCard(
         title: title,
+        icon: Icons.lan_outlined,
         subtitle: subtitle,
         onTitleTap: hasBinding ? onOpenPeers : onBind,
         trailing: IconButton(
@@ -176,15 +177,9 @@ class _PeerInfoRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isLocal = isLocalPeer(node);
     final isConnected = isLocal || node.latencyMs > 0;
-    final isDirect = isPeerDirectConnection(node);
-    final via = peerViaNodeLabel(node);
-    final name = node.hostname.isNotEmpty ? node.hostname : node.ipv4;
-    final latency = isLocal
-        ? '本机'
-        : isConnected
-        ? '${node.latencyMs.toStringAsFixed(0)} ms'
-        : '—';
-    final badge = isLocal ? '本机' : (isDirect ? '直连' : '中转');
+    final name = peerDisplayName(node);
+    final latency = peerLatencyLabel(node);
+    final ip = node.ipv4.trim().isEmpty ? '—' : node.ipv4.trim();
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -198,8 +193,8 @@ class _PeerInfoRow extends StatelessWidget {
               color: isLocal
                   ? scheme.primary
                   : isConnected
-                  ? (isDirect ? scheme.primary : Colors.orange)
-                  : scheme.outline,
+                      ? scheme.primary
+                      : scheme.outline,
               shape: BoxShape.circle,
             ),
           ),
@@ -220,7 +215,7 @@ class _PeerInfoRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  via.isNotEmpty ? '${node.ipv4} · 经 $via' : node.ipv4,
+                  ip,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -239,26 +234,6 @@ class _PeerInfoRow extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-            color: isLocal || isDirect
-                ? scheme.primaryContainer.withValues(alpha: 0.5)
-                : Colors.orange.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            badge,
-            style: TextStyle(
-              color: isLocal || isDirect
-                  ? scheme.onPrimaryContainer
-                  : Colors.orange.shade800,
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-              ),
             ),
           ),
         ],

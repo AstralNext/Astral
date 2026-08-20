@@ -19,6 +19,21 @@ String peerViaNodeLabel(KVNodeInfo node) {
   return viaHop.nodeName.isNotEmpty ? viaHop.nodeName : viaHop.targetIp;
 }
 
+/// 列表主标题：优先主机名，否则 IPv4。
+String peerDisplayName(KVNodeInfo node) {
+  final name = node.hostname.trim();
+  if (name.isNotEmpty) return name;
+  final ip = node.ipv4.trim();
+  return ip.isEmpty ? '未知节点' : ip;
+}
+
+/// 延迟文案：本机 / N ms / —。
+String peerLatencyLabel(KVNodeInfo node) {
+  if (isLocalPeer(node)) return '本机';
+  if (node.latencyMs > 0) return '${node.latencyMs.toStringAsFixed(0)} ms';
+  return '—';
+}
+
 /// 本机占位（轮询尚未返回或内核未带本机时）。
 KVNodeInfo localPeerPlaceholder({
   String hostname = '本机',

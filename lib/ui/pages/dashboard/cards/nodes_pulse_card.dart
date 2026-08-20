@@ -11,7 +11,8 @@ class _NodesPulseCard extends StatelessWidget {
       final nodes = runtimeStore.liveMetrics.value.nodeCount;
       final running = runtimeStore.liveMetrics.value.runningCount;
       return _DashboardCard(
-        title: '节点',
+        title: '活跃连接',
+        icon: Icons.hub_outlined,
         subtitle: '运行中 $running',
         child: _DashMetric(
           label: '可见节点',

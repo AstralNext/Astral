@@ -418,9 +418,16 @@ class _DashboardPageState extends State<DashboardPage> {
           final runningCount = items
               .where((item) => _runtimeStore.isRunning(item.path))
               .length;
+          final compact =
+              MediaQuery.sizeOf(context).width < AppDimensions.narrowBreakpoint;
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            padding: EdgeInsets.fromLTRB(
+              compact ? 16 : 20,
+              16,
+              compact ? 16 : 20,
+              20,
+            ),
             children: [
               _PageHeader(
                 instanceCount: items.length,
@@ -436,8 +443,8 @@ class _DashboardPageState extends State<DashboardPage> {
               const SizedBox(height: 16),
               DashboardGrid(
                 unitWidth: 120,
-                unitHeight: 156,
-                spacing: 16,
+                unitHeight: compact ? 148 : 156,
+                spacing: compact ? 12 : 16,
                 isEditing: _isEditingLayout,
                 onReorder: _saveLayoutOrder,
                 onRemove: _removeCard,

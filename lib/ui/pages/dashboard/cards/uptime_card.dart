@@ -38,6 +38,7 @@ class _UptimeCardState extends State<_UptimeCard> {
       if (runningCount == 0) {
         return const _DashboardCard(
           title: '运行时长',
+          icon: Icons.timer_outlined,
           subtitle: '暂无运行中实例',
           child: SizedBox.shrink(),
         );
@@ -46,6 +47,7 @@ class _UptimeCardState extends State<_UptimeCard> {
       if (times.isEmpty) {
         return const _DashboardCard(
           title: '运行时长',
+          icon: Icons.timer_outlined,
           subtitle: '等待内核同步',
           child: _DashMetric(label: '已运行', value: '—'),
         );
@@ -55,7 +57,8 @@ class _UptimeCardState extends State<_UptimeCard> {
       final text = Formatters.duration(DateTime.now().difference(oldest));
       return _DashboardCard(
         title: '运行时长',
-        subtitle: runningCount > 1 ? '最早实例 · $runningCount 个在跑' : '当前实例',
+        icon: Icons.timer_outlined,
+        subtitle: runningCount > 1 ? '$runningCount 个在跑' : '当前实例',
         child: _DashMetric(label: '已运行', value: text),
       );
     });

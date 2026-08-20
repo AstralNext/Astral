@@ -27,8 +27,8 @@ class _TrafficCard extends StatelessWidget {
     return Watch((context) {
       final m = runtimeStore.liveMetrics.value;
       return _DashboardCard(
-        title: '流量',
-        subtitle: '合计上下行',
+        title: '网络速度',
+        icon: Icons.speed_outlined,
         child: Row(
           children: [
             Expanded(

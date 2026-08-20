@@ -129,23 +129,24 @@ class DashboardLayout {
         _w(peerInfoType, widthSpan: 2, heightSpan: 2, order: 10),
       ];
 
-  /// 默认启用：流量、连接质量、内核、快捷入口。
+  /// 默认：全宽流量 + 两列小卡（连接质量 / 节点、内存 / 内核）。
   static DashboardLayout get defaultLayout => DashboardLayout(
         widgets: [
           _w('traffic', widthSpan: 4, order: 0),
           _w('quality', order: 1),
-          _w('core', order: 2),
-          _w('shortcuts', order: 3),
+          _w('nodes', order: 2),
+          _w('memory', order: 3),
+          _w('core', order: 4),
         ],
       );
 
   static final knownIds = {for (final w in catalog) w.catalogType};
 
   static const titles = <String, String>{
-    'traffic': '流量',
-    'memory': '内存',
+    'traffic': '网络速度',
+    'memory': '内存信息',
     'quality': '连接质量',
-    'nodes': '节点脉搏',
+    'nodes': '活跃连接',
     'duplex': '上下行',
     'uptime': '运行时长',
     'logs': '日志摘要',

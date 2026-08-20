@@ -38,7 +38,8 @@ class _UpdateCardState extends State<_UpdateCard> {
 
       return _DashboardCard(
         title: '更新',
-        subtitle: hasNew ? '发现新版本' : '当前已是跟进中',
+        icon: Icons.system_update_alt,
+        subtitle: hasNew ? '发现新版本' : '已是最新',
         trailing: hasNew
             ? Icon(Icons.fiber_new_rounded, color: colorScheme.primary)
             : null,

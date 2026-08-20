@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 abstract final class ShellTab {
   static const dashboard = 0;
   static const instances = 1;
-  static const tools = 2;
+  static const nodeInfo = 2;
   static const settings = 3;
 }
 

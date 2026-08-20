@@ -53,32 +53,34 @@ class _MemoryCardState extends State<_MemoryCard> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return _DashboardCard(
-      title: '内存',
-      subtitle: 'Astral 进程 RSS',
-      trailing: Text(
-        Formatters.bytes(_rssBytes),
-        style: TextStyle(
-          color: colorScheme.primary,
-          fontWeight: FontWeight.w700,
-          fontSize: 16,
-        ),
-      ),
-      contentPadding: EdgeInsets.zero,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SizedBox(
-            height:
-                constraints.maxHeight.isFinite ? constraints.maxHeight : 120,
-            width: double.infinity,
+      title: '内存信息',
+      icon: Icons.memory_outlined,
+      contentPadding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            Formatters.bytes(_rssBytes),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 20,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
             child: CustomPaint(
               painter: _SparklinePainter(
                 data: _history,
                 strokeColor: colorScheme.tertiary,
                 fillColor: colorScheme.tertiary.withValues(alpha: 0.14),
               ),
+              child: const SizedBox.expand(),
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

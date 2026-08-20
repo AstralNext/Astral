@@ -11,7 +11,7 @@ class _DuplexCard extends StatelessWidget {
       final m = runtimeStore.liveMetrics.value;
       return _DashboardCard(
         title: '上下行',
-        subtitle: '实时速率',
+        icon: Icons.swap_vert,
         child: Row(
           children: [
             Expanded(

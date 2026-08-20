@@ -297,14 +297,28 @@ class _DashboardGridState extends State<DashboardGrid> {
   }
 }
 
+/// 窄屏（约两列）时：大卡铺满，其余各占一列，避免 2 跨度把整行占满。
+int resolveDashboardWidthSpan({
+  required int widthSpan,
+  required int columns,
+}) {
+  final span = widthSpan <= 0 ? 1 : widthSpan;
+  if (columns <= 2) {
+    return span >= 3 ? columns : 1;
+  }
+  return span > columns ? columns : span;
+}
+
 double _itemWidth(
   DashboardGridItem item,
   int columns,
   double columnWidth,
   double spacing,
 ) {
-  final span = item.widthSpan <= 0 ? 1 : item.widthSpan;
-  final clamped = span > columns ? columns : span;
+  final clamped = resolveDashboardWidthSpan(
+    widthSpan: item.widthSpan,
+    columns: columns,
+  );
   return columnWidth * clamped + spacing * (clamped - 1);
 }
 

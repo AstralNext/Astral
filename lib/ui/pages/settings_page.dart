@@ -9,6 +9,7 @@ import 'package:astral/data/state/update_state.dart';
 import 'package:astral/di.dart';
 import 'package:astral/ui/pages/settings/about_page.dart';
 import 'package:astral/ui/pages/settings/kernel_settings_section.dart';
+import 'package:astral/ui/pages/tools/network_diagnostic_page.dart';
 import 'package:astral/ui/shell/shell_content_controller.dart';
 import 'package:astral/ui/widgets/astral_settings_section.dart';
 import 'package:astral/ui/widgets/astral_snack.dart';
@@ -116,6 +117,22 @@ class SettingsPage extends StatelessWidget {
               }),
             ],
           ),
+        ),
+        const SizedBox(height: AppDimensions.sectionGap),
+
+        AstralSettingsSection(
+          title: '工具',
+          items: [
+            AstralSettingItem(
+              icon: Icons.network_check,
+              label: '网络诊断',
+              subtitle: '检查网络连通性和延迟',
+              onTap: () => _openSubpage(
+                page: const NetworkDiagnosticPage(),
+                title: '网络诊断',
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: AppDimensions.sectionGap),
 

@@ -1,4 +1,5 @@
 import 'package:astral/ui/pages/dashboard/models/dashboard_layout.dart';
+import 'package:astral/ui/widgets/dashboard_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -70,10 +71,25 @@ void main() {
       );
     });
 
-    test('default layout stays slim', () {
+    test('default layout uses mixed home cards', () {
       expect(
         DashboardLayout.defaultLayout.widgets.map((w) => w.id).toList(),
-        ['traffic', 'quality', 'core', 'shortcuts'],
+        ['traffic', 'quality', 'nodes', 'memory', 'core'],
+      );
+    });
+
+    test('narrow grid maps large cards full-width and others to one column', () {
+      expect(
+        resolveDashboardWidthSpan(widthSpan: 4, columns: 2),
+        2,
+      );
+      expect(
+        resolveDashboardWidthSpan(widthSpan: 2, columns: 2),
+        1,
+      );
+      expect(
+        resolveDashboardWidthSpan(widthSpan: 2, columns: 6),
+        2,
       );
     });
 
@@ -147,7 +163,7 @@ void main() {
       );
       expect(
         normalized.widgets.firstWhere((w) => w.id == 'peer_info_b').widthSpan,
-        4,
+        2,
       );
       expect(
         normalized.widgets.firstWhere((w) => w.id == 'peer_info_b').heightSpan,

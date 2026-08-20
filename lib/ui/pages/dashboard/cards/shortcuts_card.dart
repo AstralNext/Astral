@@ -1,6 +1,6 @@
 part of 'package:astral/ui/pages/dashboard_page.dart';
 
-/// 快捷入口：实例 / 工具 / 设置。
+/// 快捷入口：实例 / 节点信息 / 设置。
 class _ShortcutsCard extends StatelessWidget {
   final ValueChanged<int> onNavigate;
 
@@ -43,7 +43,7 @@ class _ShortcutsCard extends StatelessWidget {
 
     return _DashboardCard(
       title: '快捷入口',
-      subtitle: '一键跳转',
+      icon: Icons.apps_outlined,
       contentPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       child: Row(
         children: [
@@ -53,9 +53,9 @@ class _ShortcutsCard extends StatelessWidget {
             tab: ShellTab.instances,
           ),
           cell(
-            icon: Icons.build_outlined,
-            label: '工具',
-            tab: ShellTab.tools,
+            icon: Icons.lan_outlined,
+            label: '节点',
+            tab: ShellTab.nodeInfo,
           ),
           cell(
             icon: Icons.settings_outlined,

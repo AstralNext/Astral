@@ -3,6 +3,7 @@ part of 'package:astral/ui/pages/dashboard_page.dart';
 class _DashboardCard extends StatefulWidget {
   final String title;
   final String subtitle;
+  final IconData? icon;
   final Widget child;
   final Widget? trailing;
   final VoidCallback? onTitleTap;
@@ -10,11 +11,12 @@ class _DashboardCard extends StatefulWidget {
 
   const _DashboardCard({
     required this.title,
-    required this.subtitle,
     required this.child,
+    this.subtitle = '',
+    this.icon,
     this.trailing,
     this.onTitleTap,
-    this.contentPadding = const EdgeInsets.fromLTRB(18, 0, 18, 18),
+    this.contentPadding = const EdgeInsets.fromLTRB(14, 0, 14, 12),
   });
 
   @override
@@ -22,15 +24,15 @@ class _DashboardCard extends StatefulWidget {
 }
 
 class _DashboardCardState extends State<_DashboardCard> {
-  static const _headerPadding = EdgeInsets.fromLTRB(18, 18, 18, 0);
-  static const _contentSpacing = 12.0;
+  static const _headerPadding = EdgeInsets.fromLTRB(14, 12, 14, 0);
+  static const _contentSpacing = 8.0;
 
   bool _isHovered = false;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.astralPalette;
-    final radius = BorderRadius.circular(AppDimensions.radiusMd);
+    final radius = BorderRadius.circular(AppDimensions.radiusLg);
     final fill = palette.surfaceColor(hovered: _isHovered);
 
     return MouseRegion(
@@ -51,20 +53,14 @@ class _DashboardCardState extends State<_DashboardCard> {
             children: [
               Padding(
                 padding: _headerPadding,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _DashboardCardTitle(
-                        title: widget.title,
-                        subtitle: widget.subtitle,
-                        onTap: widget.onTitleTap,
-                        titleColor: palette.textPrimary,
-                        subtitleColor: palette.textSecondary,
-                      ),
-                    ),
-                    if (widget.trailing != null) widget.trailing!,
-                  ],
+                child: _DashboardCardHeader(
+                  title: widget.title,
+                  subtitle: widget.subtitle,
+                  icon: widget.icon,
+                  trailing: widget.trailing,
+                  onTap: widget.onTitleTap,
+                  titleColor: palette.textPrimary,
+                  subtitleColor: palette.textSecondary,
                 ),
               ),
               const SizedBox(height: _contentSpacing),
@@ -82,63 +78,76 @@ class _DashboardCardState extends State<_DashboardCard> {
   }
 }
 
-class _DashboardCardTitle extends StatelessWidget {
+class _DashboardCardHeader extends StatelessWidget {
   final String title;
   final String subtitle;
+  final IconData? icon;
+  final Widget? trailing;
   final VoidCallback? onTap;
   final Color titleColor;
   final Color subtitleColor;
 
-  const _DashboardCardTitle({
+  const _DashboardCardHeader({
     required this.title,
     required this.subtitle,
     required this.titleColor,
     required this.subtitleColor,
+    this.icon,
+    this.trailing,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final column = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final row = Row(
       children: [
-        Row(
-          children: [
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: titleColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+        if (icon != null) ...[
+          Icon(icon, size: 16, color: subtitleColor),
+          const SizedBox(width: 6),
+        ],
+        Expanded(
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-            if (onTap != null) ...[
-              const SizedBox(width: 2),
-              Icon(Icons.chevron_right, size: 18, color: subtitleColor),
+              if (onTap != null) ...[
+                const SizedBox(width: 2),
+                Icon(Icons.chevron_right, size: 16, color: subtitleColor),
+              ],
+              if (subtitle.trim().isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(color: subtitleColor, fontSize: 11),
+                  ),
+                ),
+              ],
             ],
-          ],
-        ),
-        if (subtitle.trim().isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: subtitleColor, fontSize: 12),
           ),
-        ],
+        ),
+        ?trailing,
       ],
     );
 
-    if (onTap == null) return column;
+    if (onTap == null) return row;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: column,
+      child: row,
     );
   }
 }
