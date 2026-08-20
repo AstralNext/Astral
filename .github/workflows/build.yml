@@ -248,16 +248,6 @@ jobs:
           echo "Android release keystore ready"
         shell: bash
 
-      - name: Clean Rust cache (astral_rust_core)
-        shell: bash
-        run: |
-          set -euo pipefail
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}/git"
-          RUST_MANIFEST=$(find "$CACHE" -path '*/astral_rust_core*/rust/Cargo.toml' 2>/dev/null | head -1)
-          if [ -n "$RUST_MANIFEST" ]; then
-            cargo clean --manifest-path "$RUST_MANIFEST"
-          fi
-
       - name: Verify Windows runtime DLLs
         if: matrix.flutter_platform == 'windows'
         shell: bash
