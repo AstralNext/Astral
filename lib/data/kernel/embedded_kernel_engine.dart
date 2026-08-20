@@ -9,6 +9,7 @@ class EmbeddedKernelEngine implements KernelEngine {
   final _startedAtByInstanceId = <String, DateTime>{};
   var _connected = false;
   String? _statusMessage;
+  Future<void>? _readyOp;
 
   @override
   KernelMode get mode => KernelMode.embedded;
@@ -23,7 +24,19 @@ class EmbeddedKernelEngine implements KernelEngine {
   String? get statusMessage => _statusMessage;
 
   @override
-  Future<void> ensureReady() async {
+  Future<void> ensureReady() {
+    if (_connected) return Future.value();
+    final inflight = _readyOp;
+    if (inflight != null) return inflight;
+    late final Future<void> started;
+    started = _ensureReadyBody().whenComplete(() {
+      if (identical(_readyOp, started)) _readyOp = null;
+    });
+    _readyOp = started;
+    return started;
+  }
+
+  Future<void> _ensureReadyBody() async {
     await _p2p.ensureInitialized();
     _connected = true;
     _statusMessage = '内嵌内核已就绪';

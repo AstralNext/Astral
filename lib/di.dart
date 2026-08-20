@@ -67,13 +67,6 @@ Future<void> setupDI() async {
 
   final engine = await _createKernelEngine();
   getIt.registerSingleton<KernelEngine>(engine);
-  if (engine.mode == KernelMode.embedded) {
-    try {
-      await engine.ensureReady();
-    } catch (e) {
-      getIt<LogService>().warn('DI', '内核未就绪: $e');
-    }
-  }
   getIt<LogService>().info(
     'DI',
     'KernelEngine ${engine.mode.label}: ${engine.statusMessage ?? '窗口显示后连接'}',
@@ -99,10 +92,6 @@ Future<void> setupDI() async {
     final vpn = getIt<VpnManager>();
     vpn.onRevokedBySystem = connection.handleVpnRevokedBySystem;
     vpn.startListening();
-  }
-
-  if (engine.connected) {
-    await syncRunningInstances();
   }
 
   getIt.registerLazySingleton<SettingsState>(() => SettingsState());
@@ -137,6 +126,21 @@ Future<KernelEngine> _createKernelEngine() async {
   final p2p = P2PService();
   getIt.registerSingleton<P2PService>(p2p);
   return EmbeddedKernelEngine(p2p);
+}
+
+/// Android 内嵌内核：首帧后再 dlopen，避免挡住界面。
+Future<void> bootstrapEmbeddedKernel() async {
+  if (!getIt.isRegistered<KernelEngine>()) return;
+  final engine = getIt<KernelEngine>();
+  if (engine.mode != KernelMode.embedded) return;
+  try {
+    await engine.ensureReady();
+  } catch (e) {
+    getIt<LogService>().warn('DI', '内核未就绪: $e');
+  }
+  if (engine.connected) {
+    await syncRunningInstances();
+  }
 }
 
 Future<void> syncRunningInstances({bool reattachKernel = true}) async {

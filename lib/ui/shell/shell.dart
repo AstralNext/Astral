@@ -81,6 +81,7 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_bootstrapDesktopKernel());
+      unawaited(bootstrapEmbeddedKernel());
       final updateState = getIt<UpdateState>();
       if (updateState.autoCheckUpdate.value) {
         Future.delayed(const Duration(seconds: 1), () {

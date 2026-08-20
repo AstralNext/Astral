@@ -193,6 +193,7 @@ class InstanceConnectionService {
     var ok = false;
     DateTime? startedAt;
     try {
+      await _engine.ensureReady();
       id = await _engine.createInstance(
         configToml: configToml,
         sourcePath: path,
