@@ -35,6 +35,7 @@ class CoreServiceController {
 
   Future<void> refresh() async {
     try {
+      await _host.repairBrokenCurrentEntry();
       final next = await _host.queryInstallState();
       state.value = next;
       final binary = await _host.findBinary();
@@ -203,6 +204,7 @@ class CoreServiceController {
 
   Future<String> _syncBundledUnlocked({String? program}) async {
     await _ensureEnvironmentHealthy(allowElevate: true);
+    await _host.repairBrokenCurrentEntry();
 
     final bundled = program ?? await _host.materializeBundledProgram();
     if (bundled == null) {

@@ -118,6 +118,8 @@ class CoreHost {
   String currentProgramPath() =>
       p.join(defaultInstallRoot(), 'current', binaryName);
 
+  String currentEntryPath() => p.join(defaultInstallRoot(), 'current');
+
   /// 发行包 / `flutter run` 输出目录里，与 GUI 并排的内核。
   String bundledProgramPath() =>
       p.join(File(Platform.resolvedExecutable).parent.path, binaryName);
@@ -154,24 +156,91 @@ class CoreHost {
   }
 
   /// 把签名过的 wintun / Packet 拷到内核 exe 旁（服务进程从这里 LoadLibrary）。
+  ///
+  /// 不要创建 `{install_root}/current`：那是内核用目录结指向版本目录的入口。
   Future<void> ensureRuntimeSidecars({String? nearProgram}) async {
     if (!Platform.isWindows) return;
+    await repairBrokenCurrentEntry();
     final destDirs = <String>{
-      File(currentProgramPath()).parent.path,
       File(bundledProgramPath()).parent.path,
       if (nearProgram != null && nearProgram.trim().isNotEmpty)
         File(nearProgram.trim()).parent.path,
+      ..._existingVersionProgramDirs(),
     };
+    if (File(currentProgramPath()).existsSync()) {
+      destDirs.add(File(currentProgramPath()).parent.path);
+    }
     for (final name in windowsSidecars) {
       final src = _findSidecar(name, nearProgram);
       if (src == null) continue;
       for (final destDir in destDirs) {
-        await Directory(destDir).create(recursive: true);
+        try {
+          await Directory(destDir).create(recursive: true);
+        } on FileSystemException {
+          continue;
+        }
         final dest = p.join(destDir, name);
         if (p.equals(src, dest)) continue;
         await _copySidecarReplacing(src, dest);
       }
     }
+  }
+
+  List<String> _existingVersionProgramDirs() {
+    final root = Directory(defaultInstallRoot());
+    if (!root.existsSync()) return const [];
+    final out = <String>[];
+    for (final entity in root.listSync(followLinks: false)) {
+      if (entity is! Directory) continue;
+      final name = p.basename(entity.path);
+      if (name == 'current') continue;
+      if (File(p.join(entity.path, binaryName)).existsSync()) {
+        out.add(entity.path);
+      }
+    }
+    return out;
+  }
+
+  /// 若 `current` 被建成普通目录且没有内核 exe，删掉它，好让 astral-core 重建目录结。
+  Future<void> repairBrokenCurrentEntry() async {
+    final linkPath = currentEntryPath();
+    try {
+      if (File(currentProgramPath()).existsSync()) return;
+    } on FileSystemException {
+      // 无法遍历不受信任的装入点时，仍尝试拆掉残缺的 current。
+    }
+    final type = FileSystemEntity.typeSync(linkPath, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return;
+
+    if (Platform.isWindows) {
+      final parent = File(linkPath).parent.path;
+      await Process.run('cmd', [
+        '/C',
+        'rmdir',
+        'current',
+      ], workingDirectory: parent);
+      try {
+        if (File(currentProgramPath()).existsSync()) return;
+      } on FileSystemException {
+        // continue
+      }
+      if (FileSystemEntity.typeSync(linkPath, followLinks: false) ==
+          FileSystemEntityType.notFound) {
+        return;
+      }
+      await Process.run('cmd', [
+        '/C',
+        'rmdir',
+        '/S',
+        '/Q',
+        'current',
+      ], workingDirectory: parent);
+      return;
+    }
+
+    try {
+      await Directory(linkPath).delete(recursive: true);
+    } catch (_) {}
   }
 
   Future<void> _copySidecarReplacing(String src, String dest) async {
@@ -358,7 +427,7 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     if (elevateIfNeeded &&
         Platform.isWindows &&
         !result.ok &&
-        _looksLikeAccessDenied(result)) {
+        _looksLikeNeedsElevate(result)) {
       result = await runArgs(args, binary: binary, elevate: true);
     }
     return result;
@@ -459,12 +528,32 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     List<String> args,
     String cwd,
   ) async {
-    final filePath = exe.replaceAll("'", "''");
-    final argList = args.map((a) => "'${a.replaceAll("'", "''")}'").join(',');
+    final script = File(
+      p.join(Directory.systemTemp.path, 'astral-core-elevate.ps1'),
+    );
+    final current = currentEntryPath();
+    final argLine = args
+        .map((a) => "'${a.replaceAll("'", "''")}'")
+        .join(' ');
+    final body =
+        '''
+\$ErrorActionPreference = 'SilentlyContinue'
+\$cur = '${current.replaceAll("'", "''")}'
+\$bin = Join-Path \$cur 'astral-core.exe'
+if (-not (Test-Path -LiteralPath \$bin)) {
+  cmd.exe /c "rmdir `"\$cur`""
+  if (Test-Path -LiteralPath \$cur) { cmd.exe /c "rmdir /S /Q `"\$cur`"" }
+}
+\$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath '${cwd.replaceAll("'", "''")}'
+& '${exe.replaceAll("'", "''")}' $argLine
+exit \$LASTEXITCODE
+''';
+    await script.writeAsString(body);
+    final scriptPath = script.path.replaceAll("'", "''");
     final command =
-        "Start-Process -FilePath '$filePath' -ArgumentList $argList "
-        "-Verb RunAs -Wait -WindowStyle Hidden "
-        "-WorkingDirectory '${cwd.replaceAll("'", "''")}'";
+        "Start-Process -FilePath 'powershell' -Verb RunAs -Wait -WindowStyle Hidden "
+        "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$scriptPath'";
     final result = await Process.run('powershell', [
       '-NoProfile',
       '-ExecutionPolicy',
@@ -487,6 +576,17 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
         text.contains('administrator') ||
         text.contains('elevation') ||
         result.exitCode == 5;
+  }
+
+  static bool _looksLikeNeedsElevate(CoreCliResult result) {
+    if (_looksLikeAccessDenied(result)) return true;
+    final text = result.output.toLowerCase();
+    return text.contains('目录结') ||
+        text.contains('mklink') ||
+        text.contains('untrusted') ||
+        text.contains('不受信任') ||
+        text.contains('装入点') ||
+        text.contains('448');
   }
 
   static bool looksLikeNotInstalled(CoreCliResult result) {

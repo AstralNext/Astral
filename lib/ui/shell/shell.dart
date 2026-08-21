@@ -115,21 +115,7 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
   Future<void> _bootstrapDesktopKernel() async {
     if (!getIt.isRegistered<CoreServiceController>()) return;
 
-    // 优先尝试快速连接已运行的内核（跳过 doctor/repair）。
-    if (getIt.isRegistered<KernelEngine>()) {
-      try {
-        await getIt<KernelEngine>().ensureReady();
-      } catch (_) {}
-      if (getIt<KernelEngine>().connected) {
-        // 已连上，同步实例后在后台做 provisioning。
-        await syncRunningInstances();
-        unawaited(followRunningInstances());
-        _deferredProvision();
-        return;
-      }
-    }
-
-    // 快速连接失败，走完整 provisioning 流程。
+    // 窗口出来后由软件自己对齐内核：清残缺 current、必要时 UAC、安装/更新服务。
     try {
       await getIt<CoreServiceController>().ensureProvisioned();
     } catch (_) {}
@@ -140,18 +126,6 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
     }
     await syncRunningInstances();
     unawaited(followRunningInstances());
-  }
-
-  void _deferredProvision() {
-    Future<void>(() async {
-      try {
-        final host = getIt<CoreServiceController>().host;
-        final bundled = await host.materializeBundledProgram();
-        if (bundled != null) {
-          await host.ensureRuntimeSidecars(nearProgram: bundled);
-        }
-      } catch (_) {}
-    });
   }
 
   Future<void> _setupDesktopCloseBehavior() async {
