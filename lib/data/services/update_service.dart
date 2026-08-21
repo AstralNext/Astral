@@ -102,9 +102,12 @@ class UpdateService {
     bool includePrereleases = false,
   }) async {
     try {
+      final url = includePrereleases
+          ? AppConstants.githubRecentReleasesUrl
+          : AppConstants.githubLatestReleaseUrl;
       final response = await http
           .get(
-            Uri.parse(AppConstants.githubReleasesUrl),
+            Uri.parse(url),
             headers: {
               'Accept': 'application/vnd.github.v3+json',
               'User-Agent': 'astral',
@@ -115,21 +118,37 @@ class UpdateService {
       if (response.statusCode != 200) return null;
 
       final decoded = json.decode(response.body);
+      if (decoded is Map) {
+        return _acceptRelease(
+          Map<String, dynamic>.from(decoded),
+          includePrereleases: includePrereleases,
+        );
+      }
       if (decoded is! List) return null;
 
       for (final item in decoded) {
         if (item is! Map) continue;
-        final release = Map<String, dynamic>.from(item);
-        if (release['draft'] == true) continue;
-        if (!includePrereleases && release['prerelease'] == true) continue;
-        if (_versionFromRelease(release) == null) continue;
-        return release;
+        final release = _acceptRelease(
+          Map<String, dynamic>.from(item),
+          includePrereleases: includePrereleases,
+        );
+        if (release != null) return release;
       }
 
       return null;
     } catch (_) {
       return null;
     }
+  }
+
+  Map<String, dynamic>? _acceptRelease(
+    Map<String, dynamic> release, {
+    required bool includePrereleases,
+  }) {
+    if (release['draft'] == true) return null;
+    if (!includePrereleases && release['prerelease'] == true) return null;
+    if (_versionFromRelease(release) == null) return null;
+    return release;
   }
 
   String? _versionFromRelease(Map<String, dynamic> release) {

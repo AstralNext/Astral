@@ -193,9 +193,10 @@ jobs:
             asset="astral-core-linux-x86_64"
             dest="${GITHUB_WORKSPACE}/bundled-core/astral-core"
           fi
-          tag=nightly
-          if ! gh release view "$tag" --repo AstralNext/astral-core >/dev/null 2>&1; then
-            echo "::warning::astral-core nightly is missing; falling back to GitHub Latest"
+          # 只取最新一条发布（含 nightly），不翻页、不跟过期的 GitHub Latest（v0.1.0）。
+          tag="$(gh api "repos/AstralNext/astral-core/releases?per_page=1" --jq '.[0].tag_name')"
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "::warning::astral-core has no releases; falling back to GitHub Latest"
             tag="$(gh release view --repo AstralNext/astral-core --json tagName --jq .tagName)"
           fi
           gh release view "$tag" --repo AstralNext/astral-core --json tagName,targetCommitish,publishedAt,isPrerelease
