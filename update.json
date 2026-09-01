@@ -1,0 +1,51 @@
+{
+  "version": "1.0.11",
+  "version_code": 10011,
+  "published_at": "2026-09-01T16:00:00Z",
+  "core_version": "0.1.2",
+  "title": "1.0.11",
+  "github_release": "https://github.com/AstralNext/Astral/releases/tag/v1.0.11",
+  "notes": [
+    "修复实例雪崩：服务重启时避免 instance_cache 历史累积导致上千实例被错误拉起（RSS 从 1.26 GB 降至 15 MB）",
+    "source_path 去重：同一 TOML 配置路径只保留最新一条实例，杜绝重复叠加",
+    "服务核心固定路径：C:\\Program Files\\nextAstral\\astral-core.exe",
+    "数据目录统一：C:\\ProgramData\\nextAstral\\（TOML、node_id、instance_cache）",
+    "更新简化：一次提权完成停服务、覆盖 exe、启服务，不弹出 CMD",
+    "自动迁移：启动时自动迁移旧 AppData 路径数据与 TOML",
+    "旧服务检测：doctor 检测到旧路径服务会自动删除并重装到固定路径",
+    "GUI TOML 配置目录对齐 C:\\ProgramData\\nextAstral\\src\\"
+  ],
+  "downloads": {
+    "quark": {
+      "share_url": "https://pan.quark.cn/s/0d48735fd3d9",
+      "passcode": "",
+      "includes": ["windows-setup", "windows-portable", "linux-x64", "android-arm64"]
+    },
+    "windows": {
+      "setup": {
+        "name": "astral-1.0.11-windows-x64-setup.exe",
+        "size": 27869299,
+        "url": "https://github.com/AstralNext/Astral/releases/download/v1.0.11/astral-1.0.11-windows-x64-setup.exe"
+      },
+      "portable": {
+        "name": "astral-1.0.11-windows-x64.zip",
+        "size": 38681030,
+        "url": "https://github.com/AstralNext/Astral/releases/download/v1.0.11/astral-1.0.11-windows-x64.zip"
+      }
+    },
+    "linux": {
+      "x64": {
+        "name": "astral-1.0.11-linux-x64.tar.gz",
+        "size": 47345345,
+        "url": "https://github.com/AstralNext/Astral/releases/download/v1.0.11/astral-1.0.11-linux-x64.tar.gz"
+      }
+    },
+    "android": {
+      "arm64": {
+        "name": "astral-1.0.11-android-arm64.apk",
+        "size": 50942182,
+        "url": "https://github.com/AstralNext/Astral/releases/download/v1.0.11/astral-1.0.11-android-arm64.apk"
+      }
+    }
+  }
+}
