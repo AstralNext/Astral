@@ -118,10 +118,11 @@ class CoreHost {
     return p.join(base, 'astral-core', 'app');
   }
 
-  String currentProgramPath() =>
-      p.join(defaultInstallRoot(), 'current', binaryName);
+  /// 固定安装路径：{install_root}/astral-core[.exe]
+  String currentProgramPath() => p.join(defaultInstallRoot(), binaryName);
 
-  String currentEntryPath() => p.join(defaultInstallRoot(), 'current');
+  /// 固定安装根（无 current 子目录）。
+  String currentEntryPath() => defaultInstallRoot();
 
   /// 发行包 / `flutter run` 输出目录里，与 GUI 并排的内核。
   String bundledProgramPath() =>
@@ -159,8 +160,6 @@ class CoreHost {
   }
 
   /// 把签名过的 wintun / Packet 拷到内核 exe 旁（服务进程从这里 LoadLibrary）。
-  ///
-  /// 不要创建 `{install_root}/current`：那是内核用目录结指向版本目录的入口。
   Future<void> ensureRuntimeSidecars({String? nearProgram}) async {
     if (!Platform.isWindows) return;
     await repairBrokenCurrentEntry();
@@ -168,11 +167,8 @@ class CoreHost {
       File(bundledProgramPath()).parent.path,
       if (nearProgram != null && nearProgram.trim().isNotEmpty)
         File(nearProgram.trim()).parent.path,
-      ..._existingVersionProgramDirs(),
+      File(currentProgramPath()).parent.path,
     };
-    if (File(currentProgramPath()).existsSync()) {
-      destDirs.add(File(currentProgramPath()).parent.path);
-    }
     for (final name in windowsSidecars) {
       final src = _findSidecar(name, nearProgram);
       if (src == null) continue;
@@ -189,61 +185,21 @@ class CoreHost {
     }
   }
 
-  List<String> _existingVersionProgramDirs() {
+  /// 清理旧版布局残留（current 链接 / 版本子目录）。尽力删除，失败忽略。
+  Future<void> repairBrokenCurrentEntry() async {
     final root = Directory(defaultInstallRoot());
-    if (!root.existsSync()) return const [];
-    final out = <String>[];
+    if (!root.existsSync()) return;
     for (final entity in root.listSync(followLinks: false)) {
       if (entity is! Directory) continue;
       final name = p.basename(entity.path);
-      if (name == 'current') continue;
-      if (File(p.join(entity.path, binaryName)).existsSync()) {
-        out.add(entity.path);
-      }
-    }
-    return out;
-  }
-
-  /// 若 `current` 被建成普通目录且没有内核 exe，删掉它，好让 astral-core 重建目录结。
-  Future<void> repairBrokenCurrentEntry() async {
-    final linkPath = currentEntryPath();
-    try {
-      if (File(currentProgramPath()).existsSync()) return;
-    } on FileSystemException {
-      // 无法遍历不受信任的装入点时，仍尝试拆掉残缺的 current。
-    }
-    final type = FileSystemEntity.typeSync(linkPath, followLinks: false);
-    if (type == FileSystemEntityType.notFound) return;
-
-    if (Platform.isWindows) {
-      final parent = File(linkPath).parent.path;
-      await Process.run('cmd', [
-        '/C',
-        'rmdir',
-        'current',
-      ], workingDirectory: parent);
+      final isVersionDir = double.tryParse(name) != null;
+      if (name != 'current' && !isVersionDir) continue;
       try {
-        if (File(currentProgramPath()).existsSync()) return;
-      } on FileSystemException {
-        // continue
+        await Directory(entity.path).delete(recursive: true);
+      } catch (_) {
+        // Program Files 需要管理员权限；删除失败留给提权流程处理
       }
-      if (FileSystemEntity.typeSync(linkPath, followLinks: false) ==
-          FileSystemEntityType.notFound) {
-        return;
-      }
-      await Process.run('cmd', [
-        '/C',
-        'rmdir',
-        '/S',
-        '/Q',
-        'current',
-      ], workingDirectory: parent);
-      return;
     }
-
-    try {
-      await Directory(linkPath).delete(recursive: true);
-    } catch (_) {}
   }
 
   Future<void> _copySidecarReplacing(String src, String dest) async {
@@ -543,10 +499,8 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     final script = File(
       p.join(Directory.systemTemp.path, 'astral-core-elevate.ps1'),
     );
-    final current = currentEntryPath();
     final exeLit = exe.replaceAll("'", "''");
     final cwdLit = cwd.replaceAll("'", "''");
-    final curLit = current.replaceAll("'", "''");
     final blocks = StringBuffer();
     for (final args in argsBatch) {
       final argLine = args.map((a) => "'${a.replaceAll("'", "''")}'").join(' ');
@@ -557,13 +511,6 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     final body =
         '''
 \$ErrorActionPreference = 'SilentlyContinue'
-\$cur = '$curLit'
-\$bin = Join-Path \$cur 'astral-core.exe'
-if (-not (Test-Path -LiteralPath \$bin)) {
-  cmd.exe /c "rmdir `"\$cur`""
-  if (Test-Path -LiteralPath \$cur) { cmd.exe /c "rmdir /S /Q `"\$cur`"" }
-}
-\$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath '$cwdLit'
 $blocks
 exit \$code
@@ -652,9 +599,7 @@ exit \$code
   static bool _looksLikeNeedsElevate(CoreCliResult result) {
     if (_looksLikeAccessDenied(result)) return true;
     final text = result.output.toLowerCase();
-    return text.contains('目录结') ||
-        text.contains('mklink') ||
-        text.contains('untrusted') ||
+    return text.contains('untrusted') ||
         text.contains('不受信任') ||
         text.contains('装入点') ||
         text.contains('448');

@@ -2,7 +2,7 @@ name: astral
 description: "Astral"
 publish_to: 'none'
 
-version: 1.0.10
+version: 1.0.11
 
 environment:
   sdk: ^3.8.0
