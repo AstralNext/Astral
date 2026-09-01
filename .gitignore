@@ -58,3 +58,4 @@ app.*.map.json
 /release/
 /release_installer/
 /_ci_dl/
+/_release/

@@ -219,7 +219,8 @@ class CoreServiceController {
           latestState == CoreInstallState.missingBinary) {
         await _host.stopDetachedListener();
       }
-      final r = await _host.installService(binary: bundled);
+      // 一次提权完成 install + start，避免多次 UAC
+      final r = await _host.installAndStartService(binary: bundled);
       if (!await _okOrNowInstalled(r)) {
         throw StateError(r.output.isEmpty ? '安装失败' : r.output);
       }
@@ -239,7 +240,11 @@ class CoreServiceController {
       return '内核已与软件携带版本一致';
     }
 
-    final r = await _host.updateService(newProgram: bundled, binary: bundled);
+    // 一次提权完成 update + start，避免多次 UAC
+    final r = await _host.updateAndStartService(
+      newProgram: bundled,
+      binary: bundled,
+    );
     if (!r.ok && Platform.isWindows) {
       if (!(await _host.queryInstallState()).isInstalled) {
         throw StateError(r.output.isEmpty ? '更新失败' : r.output);

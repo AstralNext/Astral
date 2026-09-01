@@ -67,9 +67,10 @@ class CoreHost {
 
   String dataRoot() {
     if (Platform.isWindows) {
-      final appdata = Platform.environment['APPDATA'] ?? '';
-      // 与 directories::ProjectDirs Windows data_dir 对齐：...\Astral\astral-core\data
-      return p.join(appdata, 'Astral', 'astral-core', 'data');
+      // 与 astral-core `config::paths::discover()` 对齐：C:\ProgramData\nextAstral
+      final programData =
+          Platform.environment['PROGRAMDATA'] ?? r'C:\ProgramData';
+      return p.join(programData, 'nextAstral');
     }
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
@@ -94,8 +95,10 @@ class CoreHost {
   /// 与 astral-core `layout::default_install_root` 对齐。
   String defaultInstallRoot() {
     if (Platform.isWindows) {
-      final local = Platform.environment['LOCALAPPDATA'] ?? '';
-      return p.join(local, 'Astral', 'astral-core', 'data', 'app');
+      // 与 astral-core `layout::default_install_root()` 对齐：C:\Program Files\nextAstral
+      final programFiles =
+          Platform.environment['PROGRAMFILES'] ?? r'C:\Program Files';
+      return p.join(programFiles, 'nextAstral');
     }
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
@@ -527,27 +530,43 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
     String exe,
     List<String> args,
     String cwd,
+  ) => _runElevatedBatch(exe, [args], cwd);
+
+  /// 一次 UAC 提权执行多组参数（同一 exe）。
+  /// 用于把 install+start / update+start 合并成一次提权，
+  /// 避免用户在自动更新时被弹多次 UAC。
+  Future<CoreCliResult> _runElevatedBatch(
+    String exe,
+    List<List<String>> argsBatch,
+    String cwd,
   ) async {
     final script = File(
       p.join(Directory.systemTemp.path, 'astral-core-elevate.ps1'),
     );
     final current = currentEntryPath();
-    final argLine = args
-        .map((a) => "'${a.replaceAll("'", "''")}'")
-        .join(' ');
+    final exeLit = exe.replaceAll("'", "''");
+    final cwdLit = cwd.replaceAll("'", "''");
+    final curLit = current.replaceAll("'", "''");
+    final blocks = StringBuffer();
+    for (final args in argsBatch) {
+      final argLine = args.map((a) => "'${a.replaceAll("'", "''")}'").join(' ');
+      blocks.writeln("& '$exeLit' $argLine");
+      // 每步都吃掉错误，继续下一步（start 在未 install 时会失败，但不阻断）
+      blocks.writeln('\$code = \$LASTEXITCODE');
+    }
     final body =
         '''
 \$ErrorActionPreference = 'SilentlyContinue'
-\$cur = '${current.replaceAll("'", "''")}'
+\$cur = '$curLit'
 \$bin = Join-Path \$cur 'astral-core.exe'
 if (-not (Test-Path -LiteralPath \$bin)) {
   cmd.exe /c "rmdir `"\$cur`""
   if (Test-Path -LiteralPath \$cur) { cmd.exe /c "rmdir /S /Q `"\$cur`"" }
 }
 \$ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath '${cwd.replaceAll("'", "''")}'
-& '${exe.replaceAll("'", "''")}' $argLine
-exit \$LASTEXITCODE
+Set-Location -LiteralPath '$cwdLit'
+$blocks
+exit \$code
 ''';
     await script.writeAsString(body);
     final scriptPath = script.path.replaceAll("'", "''");
@@ -566,6 +585,58 @@ exit \$LASTEXITCODE
       stdout: result.stdout.toString(),
       stderr: result.stderr.toString(),
     );
+  }
+
+  /// 一次提权完成安装 + 启动（Windows）。
+  Future<CoreCliResult> installAndStartService({
+    required String binary,
+    String listen = listenAddress,
+  }) async {
+    final args = [
+      'service',
+      'install',
+      '--listen',
+      listen,
+      '--program',
+      binary,
+    ];
+    if (Platform.isWindows) {
+      final cwd = File(binary).parent.path;
+      return _runElevatedBatch(binary, [
+        args,
+        ['service', 'start'],
+      ], cwd);
+    }
+    final install = await runService(
+      'install',
+      extra: ['--listen', listen, '--program', binary],
+      binary: binary,
+    );
+    if (!install.ok) return install;
+    return startService(binary: binary);
+  }
+
+  /// 一次提权完成更新 + 启动（Windows）。
+  Future<CoreCliResult> updateAndStartService({
+    required String newProgram,
+    String? binary,
+  }) async {
+    final args = ['service', 'update', '--program', newProgram];
+    if (Platform.isWindows) {
+      final exe = binary ?? newProgram;
+      final cwd = File(exe).parent.path;
+      return _runElevatedBatch(exe, [
+        args,
+        ['service', 'start'],
+      ], cwd);
+    }
+    final update = await runService(
+      'update',
+      extra: ['--program', newProgram],
+      binary: binary,
+    );
+    if (!update.ok) return update;
+    return startService(binary: binary);
   }
 
   static bool _looksLikeAccessDenied(CoreCliResult result) {
