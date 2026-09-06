@@ -1,35 +1,10 @@
-name: Build Astral
+name: Release Astral
 
 on:
-  workflow_dispatch:
-    inputs:
-      platform:
-        description: 'Select platform to build'
-        required: true
-        type: choice
-        options:
-          - all
-          - android-arm64
-          - linux-x64
-          - windows-x64
-        default: 'all'
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-    paths:
-      - 'lib/**'
-      - 'android/**'
-      - 'ios/**'
-      - 'linux/**'
-      - 'macos/**'
-      - 'windows/**'
-      - 'assets/**'
-      - 'installer/**'
-      - 'dlls/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/build.yml'
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   matrix-prep:
@@ -39,28 +14,13 @@ jobs:
     steps:
       - id: set-matrix
         shell: bash
-        env:
-          EVENT: ${{ github.event_name }}
-          SELECTED: ${{ inputs.platform }}
         run: |
           set -euo pipefail
-          ALL=$(jq -nc '
-            [
-              {"platform":"android-arm64","os":"ubuntu-22.04","flutter_platform":"android","rust_target":"aarch64-linux-android","build_cmd":"flutter build apk --release --target-platform android-arm64","artifact_path":"build/app/outputs/flutter-apk/app-release.apk","artifact_name":"astral-android-arm64"},
-              {"platform":"linux-x64","os":"ubuntu-22.04","flutter_platform":"linux","rust_target":"x86_64-unknown-linux-gnu","build_cmd":"flutter build linux --release","artifact_path":"build/linux/x64/release/bundle","artifact_name":"astral-linux-x64"},
-              {"platform":"windows-x64","os":"windows-2022","flutter_platform":"windows","rust_target":"x86_64-pc-windows-msvc","build_cmd":"flutter build windows --release","artifact_path":"build/windows/x64/runner/Release","artifact_name":"astral-windows-x64"}
-            ]
-          ')
-          if [[ "$EVENT" == "workflow_dispatch" && "$SELECTED" != "all" ]]; then
-            INCLUDE=$(echo "$ALL" | jq -c --arg p "$SELECTED" '[.[] | select(.platform == $p)]')
-          else
-            INCLUDE=$(echo "$ALL" | jq -c '.')
-          fi
-          if [[ "$INCLUDE" == "[]" ]]; then
-            echo "::error::Unknown platform: $SELECTED"
-            exit 1
-          fi
-          MATRIX=$(echo "$INCLUDE" | jq -c '{include: .}')
+          MATRIX=$(jq -nc '{include: [
+            {"platform":"android-arm64","os":"ubuntu-22.04","flutter_platform":"android","rust_target":"aarch64-linux-android","build_cmd":"flutter build apk --release --target-platform android-arm64","artifact_path":"build/app/outputs/flutter-apk/app-release.apk","artifact_name":"astral-android-arm64"},
+            {"platform":"linux-x64","os":"ubuntu-22.04","flutter_platform":"linux","rust_target":"x86_64-unknown-linux-gnu","build_cmd":"flutter build linux --release","artifact_path":"build/linux/x64/release/bundle","artifact_name":"astral-linux-x64"},
+            {"platform":"windows-x64","os":"windows-2022","flutter_platform":"windows","rust_target":"x86_64-pc-windows-msvc","build_cmd":"flutter build windows --release","artifact_path":"build/windows/x64/runner/Release","artifact_name":"astral-windows-x64"}
+          ]}')
           {
             echo 'matrix<<MATRIX_EOF'
             echo "$MATRIX"
@@ -178,7 +138,6 @@ jobs:
             asset="astral-core-linux-x86_64"
             dest="${GITHUB_WORKSPACE}/bundled-core/astral-core"
           fi
-          # 只取最新一条发布（含 nightly），不翻页、不跟过期的 GitHub Latest（v0.1.0）。
           tag="$(gh api "repos/AstralNext/astral-core/releases?per_page=1" --jq '.[0].tag_name')"
           if [ -z "$tag" ] || [ "$tag" = "null" ]; then
             echo "::warning::astral-core has no releases; falling back to GitHub Latest"
@@ -204,10 +163,6 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-              echo "::warning::No ANDROID_KEYSTORE_BASE64 on PR; using debug signing"
-              exit 0
-            fi
             echo "::error::Missing secret ANDROID_KEYSTORE_BASE64"
             exit 1
           fi
@@ -332,3 +287,32 @@ jobs:
           name: astral-windows-x64-setup
           path: release_installer/astral-*-windows-x64-setup.exe
           retention-days: 14
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+
+      - name: List artifacts
+        run: find release-assets -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/astral-android-arm64/*.apk
+            release-assets/astral-linux-x64/*.tar.gz
+            release-assets/astral-windows-x64/*.zip
+            release-assets/astral-windows-x64-setup/*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
