@@ -15,20 +15,6 @@ on:
         default: 'all'
   push:
     branches: [main]
-    paths:
-      - 'lib/**'
-      - 'android/**'
-      - 'ios/**'
-      - 'linux/**'
-      - 'macos/**'
-      - 'windows/**'
-      - 'assets/**'
-      - 'installer/**'
-      - 'dlls/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/build.yml'
-  push:
     tags:
       - 'v*'
   pull_request:
