@@ -45,8 +45,6 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
 
   bool _isDirectConnection(KVNodeInfo node) => isPeerDirectConnection(node);
 
-  String _getViaNode(KVNodeInfo node) => peerViaNodeLabel(node);
-
   int _resolveColumns(double width) {
     if (width >= 1600) {
       return 4;
@@ -203,7 +201,7 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
     final isLocal = isLocalPeer(node);
     final isConnected = isLocal || node.latencyMs > 0;
     final isDirect = _isDirectConnection(node);
-    final viaNode = _getViaNode(node);
+    final routePath = peerRoutePath(node);
     final badge = isLocal ? '本机' : (isDirect ? '直连' : '中转');
 
     return Card(
@@ -282,24 +280,29 @@ class _InstancePeersPageState extends State<InstancePeersPage> {
                 ),
               ],
             ),
-            if (viaNode.isNotEmpty) ...[
+            if (routePath.isNotEmpty) ...[
               const SizedBox(height: 5),
               Row(
                 children: [
                   Icon(
-                    Icons.alt_route,
+                    isDirect ? Icons.bolt_outlined : Icons.alt_route,
                     size: 12,
-                    color: Colors.orange.shade700,
+                    color: isDirect
+                        ? colorScheme.primary
+                        : Colors.orange.shade700,
                   ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      '通过 $viaNode 中转',
+                      routePath,
                       style: TextStyle(
-                        color: Colors.orange.shade800,
+                        color: isDirect
+                            ? colorScheme.onSurfaceVariant
+                            : Colors.orange.shade800,
                         fontSize: 10,
+                        fontWeight: FontWeight.w500,
                       ),
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),

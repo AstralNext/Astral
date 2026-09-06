@@ -9,6 +9,9 @@ import 'package:astral/data/kernel/kernel_mode.dart';
 import 'package:astral/data/services/log_service.dart';
 import 'package:astral_rust_core/astral_rust_core.dart'
     show KVNetworkStatus, KVNodeInfo;
+// NodeHopStats 未从包公开 API 导出，但 KVNodeInfo.hops 需要它。
+// ignore: implementation_imports
+import 'package:astral_rust_core/src/rust/api/p2p.dart' show NodeHopStats;
 
 class ServiceKernelEngine implements KernelEngine {
   ServiceKernelEngine({
@@ -414,6 +417,24 @@ bool _isLocalNode(KVNodeInfo node) {
   return node.cost == 0 || conn == 'local' || node.peerId == 0;
 }
 
+List<NodeHopStats> _parseHops(dynamic raw) {
+  if (raw is! List) return const [];
+  final List<NodeHopStats> hops = [];
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final m = Map<String, dynamic>.from(item);
+    final hop = NodeHopStats(
+      peerId: int.tryParse('${m['peer_id'] ?? 0}') ?? 0,
+      targetIp: '${m['target_ip'] ?? ''}',
+      latencyMs: (m['latency_ms'] as num?)?.toDouble() ?? 0,
+      packetLoss: (m['packet_loss'] as num?)?.toDouble() ?? 0,
+      nodeName: '${m['node_name'] ?? ''}',
+    );
+    if (hop.peerId != 0) hops.add(hop);
+  }
+  return hops;
+}
+
 KVNodeInfo _peerToNode(Map<String, dynamic> peer) {
   final conn = '${peer['conn_type'] ?? ''}'.trim();
   final cost = switch (conn.toLowerCase()) {
@@ -429,7 +450,7 @@ KVNodeInfo _peerToNode(Map<String, dynamic> peer) {
     ipv6: '${peer['ipv6'] ?? ''}',
     latencyMs: (peer['latency_ms'] as num?)?.toDouble() ?? 0,
     nat: '',
-    hops: const [],
+    hops: _parseHops(peer['hops']),
     lossRate: () {
       final loss = (peer['loss_percent'] as num?)?.toDouble() ?? 0;
       return loss > 1 ? loss / 100.0 : loss;

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:astral/data/services/platform_path_service.dart';
 import 'package:astral/data/services/toml_config_service.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 class InstanceCatalogSnapshot {
   final String rootPath;
@@ -33,6 +34,40 @@ class InstanceCatalogService {
   final TomlConfigService _tomlService;
 
   Future<InstanceCatalogSnapshot> loadSnapshot() => _loadLocalSnapshot();
+
+  /// 把旧版 AppData 下的 TOML 配置复制到新目录（纯文件拷贝，不碰服务）。
+  ///
+  /// v1.0.10 起实例配置目录从用户 AppData 迁到 `C:\ProgramData\nextAstral\src`。
+  /// 内核服务的 instance_cache / node_id 不迁移（不自动恢复旧实例），
+  /// 但用户手写的 TOML 配置保留，避免升级后实例列表变空。
+  Future<int> migrateLegacyTomlIfNeeded() async {
+    if (!Platform.isWindows) return 0;
+    final newDir = await ensureInstancesDirPath();
+    final newDirEntity = Directory(newDir);
+    if (newDirEntity.existsSync() &&
+        newDirEntity.listSync().any((e) => e.path.toLowerCase().endsWith('.toml'))) {
+      return 0;
+    }
+
+    final supportDir = await getApplicationSupportDirectory();
+    final oldDir = Directory(p.join(supportDir.path, 'src'));
+    if (!oldDir.existsSync()) return 0;
+
+    var copied = 0;
+    await for (final entity in oldDir.list(recursive: true, followLinks: false)) {
+      if (entity is! File || !entity.path.toLowerCase().endsWith('.toml')) {
+        continue;
+      }
+      final relative = p.relative(entity.path, from: oldDir.path);
+      final dest = p.join(newDir, relative);
+      final destFile = File(dest);
+      if (destFile.existsSync()) continue;
+      await destFile.parent.create(recursive: true);
+      await entity.copy(dest);
+      copied++;
+    }
+    return copied;
+  }
 
   Future<String?> readToml(String path) async {
     final f = File(path);

@@ -19,6 +19,22 @@ String peerViaNodeLabel(KVNodeInfo node) {
   return viaHop.nodeName.isNotEmpty ? viaHop.nodeName : viaHop.targetIp;
 }
 
+/// 完整路径描述，例如 "本机 → relay-1 → relay-2 → 目标"。
+/// 本机返回空串；直连返回 "直连"；中继返回拼接的链路。
+String peerRoutePath(KVNodeInfo node) {
+  if (isLocalPeer(node)) return '';
+  if (isPeerDirectConnection(node)) return '直连';
+  if (node.hops.isEmpty) return '直连';
+  final parts = <String>['本机'];
+  for (final h in node.hops) {
+    final name = h.nodeName.isNotEmpty ? h.nodeName : h.targetIp;
+    if (name.isNotEmpty) parts.add(name);
+  }
+  final target = node.hostname.isNotEmpty ? node.hostname : node.ipv4;
+  if (target.isNotEmpty) parts.add(target);
+  return parts.join(' → ');
+}
+
 /// 列表主标题：优先主机名，否则 IPv4。
 String peerDisplayName(KVNodeInfo node) {
   final name = node.hostname.trim();

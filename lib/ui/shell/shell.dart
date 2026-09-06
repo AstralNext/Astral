@@ -6,6 +6,7 @@ import 'package:astral/config/theme.dart';
 import 'package:astral/data/kernel/core_service_controller.dart';
 import 'package:astral/data/kernel/kernel_engine.dart';
 import 'package:astral/data/services/update_service.dart';
+import 'package:astral/data/services/windows_startup_launch.dart';
 import 'package:astral/data/state/settings_state.dart';
 import 'package:astral/data/state/update_state.dart';
 import 'package:astral/di.dart';
@@ -115,9 +116,13 @@ class _ShellState extends State<Shell> with WindowListener, TrayListener {
   Future<void> _bootstrapDesktopKernel() async {
     if (!getIt.isRegistered<CoreServiceController>()) return;
 
-    // 窗口出来后由软件自己对齐内核：清残缺 current、必要时 UAC、安装/更新服务。
+    // 登录自启（--minimized）时不弹 UAC，只刷新状态；
+    // 需要提权的清理/安装留到用户主动打开窗口后再做。
+    final minimized = WindowsStartupLaunch.argsRequestMinimized();
     try {
-      await getIt<CoreServiceController>().ensureProvisioned();
+      await getIt<CoreServiceController>().ensureProvisioned(
+        allowElevate: !minimized,
+      );
     } catch (_) {}
     if (getIt.isRegistered<KernelEngine>()) {
       try {

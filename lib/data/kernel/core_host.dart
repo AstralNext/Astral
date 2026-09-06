@@ -440,7 +440,7 @@ Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinu
   /// 清理旧服务 / 旧进程，可选迁移 legacy 数据目录。
   Future<CoreRepairReport?> serviceRepair({
     String? binary,
-    bool migrateLegacyData = true,
+    bool migrateLegacyData = false,
     bool elevateIfNeeded = true,
   }) async {
     final result = await runService(

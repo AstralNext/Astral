@@ -15,8 +15,6 @@ on:
         default: 'all'
   push:
     branches: [main]
-    tags:
-      - 'v*'
     paths:
       - 'lib/**'
       - 'android/**'
@@ -30,6 +28,9 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/build.yml'
+  push:
+    tags:
+      - 'v*'
   pull_request:
     branches: [main]
     paths:

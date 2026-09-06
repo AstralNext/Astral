@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:astral/data/kernel/core_host.dart';
@@ -44,6 +45,17 @@ Future<void> setupDI() async {
       getIt<TomlConfigService>(),
     ),
   );
+  // 升级路径：把旧 AppData 下的 TOML 配置拷到新目录（不碰服务、不要 UAC）。
+  unawaited(() async {
+    try {
+      final n = await getIt<InstanceCatalogService>().migrateLegacyTomlIfNeeded();
+      if (n > 0) {
+        getIt<LogService>().info('DI', '已迁移 $n 个旧版实例配置（TOML）');
+      }
+    } catch (e) {
+      getIt<LogService>().warn('DI', '迁移旧版 TOML 失败: $e');
+    }
+  }());
 
   await ClientRuntimeInfo.warmUp();
 

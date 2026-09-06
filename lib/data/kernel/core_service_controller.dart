@@ -64,7 +64,13 @@ class CoreServiceController {
         return;
       }
 
-      await _ensureEnvironmentHealthy(allowElevate: true);
+      final healthy = await _ensureEnvironmentHealthy(allowElevate: true);
+      if (!healthy) {
+        await refresh();
+        lastMessage.value = '旧版服务环境未清理完成，请打开窗口后重试';
+        _log.warn(_module, lastMessage.value!);
+        return;
+      }
 
       final bundled = await _host.materializeBundledProgram();
       if (bundled != null) {
@@ -120,9 +126,9 @@ class CoreServiceController {
       return true;
     }
 
-    _log.info(_module, '正在自动修复服务环境…');
+    _log.info(_module, '正在清理旧版服务环境…');
     final repair = await _host.serviceRepair(
-      migrateLegacyData: true,
+      migrateLegacyData: false,
       elevateIfNeeded: true,
     );
     _environmentRepairDone = true;
