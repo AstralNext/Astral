@@ -1,318 +1,109 @@
-name: Release Astral
+# 发布 Astral
+#
+# 手动触发：Actions → 发布 → Run workflow，输入标签名。
+# 从 build.yml 最新一次成功运行的 artifacts 下载产物，创建 GitHub Release 并挂载。
+# 推送 v* 标签只会触发 build.yml 编译，不会自动发布。
+name: 发布
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Git 标签（如 v1.0.12）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
 
 jobs:
-  matrix-prep:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - id: set-matrix
-        shell: bash
+      - name: 检出
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 解析发布参数
+        id: cfg
         run: |
-          set -euo pipefail
-          MATRIX=$(jq -nc '{include: [
-            {"platform":"android-arm64","os":"ubuntu-22.04","flutter_platform":"android","rust_target":"aarch64-linux-android","build_cmd":"flutter build apk --release --target-platform android-arm64","artifact_path":"build/app/outputs/flutter-apk/app-release.apk","artifact_name":"astral-android-arm64"},
-            {"platform":"linux-x64","os":"ubuntu-22.04","flutter_platform":"linux","rust_target":"x86_64-unknown-linux-gnu","build_cmd":"flutter build linux --release","artifact_path":"build/linux/x64/release/bundle","artifact_name":"astral-linux-x64"},
-            {"platform":"windows-x64","os":"windows-2022","flutter_platform":"windows","rust_target":"x86_64-pc-windows-msvc","build_cmd":"flutter build windows --release","artifact_path":"build/windows/x64/runner/Release","artifact_name":"astral-windows-x64"}
-          ]}')
+          set -euxo pipefail
+          TAG="${{ inputs.tag_name }}"
+          VER="${TAG#v}"
           {
-            echo 'matrix<<MATRIX_EOF'
-            echo "$MATRIX"
-            echo 'MATRIX_EOF'
+            echo "tag=$TAG"
+            echo "version=$VER"
           } >> "$GITHUB_OUTPUT"
 
-  build:
-    name: ${{ matrix.platform }}
-    needs: matrix-prep
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.matrix-prep.outputs.matrix) }}
-
-    env:
-      FLUTTER_VERSION: '3.41.0'
-      NDK_VERSION: '28.2.13676358'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup JDK (Android)
-        if: matrix.flutter_platform == 'android'
-        uses: actions/setup-java@v5
+      - name: 拉取 Windows zip
+        uses: dawidd6/action-download-artifact@v6
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: build.yml
+          name: astral-windows-x64
+          path: _dl/windows
+          search_artifacts: true
+          if_no_artifact_found: warn
 
-      - name: Setup Android SDK
-        if: matrix.flutter_platform == 'android'
-        uses: android-actions/setup-android@v4
+      - name: 拉取 Linux
+        uses: dawidd6/action-download-artifact@v6
         with:
-          packages: >-
-            tools platform-tools platforms;android-35 build-tools;35.0.0 ndk;${{ env.NDK_VERSION }} cmake;3.22.1
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: build.yml
+          name: astral-linux-x64
+          path: _dl/linux
+          search_artifacts: true
+          if_no_artifact_found: warn
 
-      - name: Setup bindgen for Android
-        if: matrix.flutter_platform == 'android'
-        run: |
-          NDK_PATH=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}
-          SYSROOT=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-          echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$SYSROOT" >> $GITHUB_ENV
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ninja-build \
-            libgtk-3-dev \
-            clang \
-            cmake \
-            pkg-config \
-            libcurl4-openssl-dev \
-            libssl-dev \
-            protobuf-compiler \
-            libayatana-appindicator3-dev \
-            libnotify-dev \
-            fonts-noto-cjk \
-            fonts-wqy-zenhei \
-            fontconfig
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - name: 拉取 Android arm64
+        uses: dawidd6/action-download-artifact@v6
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
-          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: build.yml
+          name: astral-android-arm64
+          path: _dl/android-arm64
+          search_artifacts: true
+          if_no_artifact_found: warn
 
-      - name: Enable desktop platform
-        if: matrix.flutter_platform == 'linux' || matrix.flutter_platform == 'windows'
-        run: flutter config --enable-${{ matrix.flutter_platform }}-desktop
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: 拉取 Windows 安装包
+        uses: dawidd6/action-download-artifact@v6
         with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Install protoc
-        if: runner.os == 'Windows'
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Windows Cargokit build tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Add-Content -Path $env:GITHUB_ENV -Value "CARGOKIT_VERBOSE=1"
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
-            -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
-          choco install nasm --yes --no-progress
-          $nasmDir = 'C:\Program Files\NASM'
-          if (Test-Path $nasmDir) {
-            Add-Content -Path $env:GITHUB_PATH -Value $nasmDir
-          }
-          rustc -V
-          & protoc --version
-          Get-Command nasm -ErrorAction SilentlyContinue | Out-String | Write-Host
-
-      - name: Download bundled astral-core
-        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p bundled-core
-          if [ "${{ matrix.flutter_platform }}" = "windows" ]; then
-            asset="astral-core-windows-x86_64.exe"
-            dest="${GITHUB_WORKSPACE}/bundled-core/astral-core.exe"
-          else
-            asset="astral-core-linux-x86_64"
-            dest="${GITHUB_WORKSPACE}/bundled-core/astral-core"
-          fi
-          tag="$(gh api "repos/AstralNext/astral-core/releases?per_page=1" --jq '.[0].tag_name')"
-          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
-            echo "::warning::astral-core has no releases; falling back to GitHub Latest"
-            tag="$(gh release view --repo AstralNext/astral-core --json tagName --jq .tagName)"
-          fi
-          gh release view "$tag" --repo AstralNext/astral-core --json tagName,targetCommitish,publishedAt,isPrerelease
-          gh release download "$tag" --repo AstralNext/astral-core --pattern "$asset" --dir bundled-core
-          mv "bundled-core/$asset" "$dest"
-          chmod +x "$dest"
-          echo "ASTRAL_CORE_EXE=$dest" >> "$GITHUB_ENV"
-          ls -la bundled-core
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Setup Android release signing
-        if: matrix.flutter_platform == 'android'
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "::error::Missing secret ANDROID_KEYSTORE_BASE64"
-            exit 1
-          fi
-          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
-            echo "::error::Missing Android signing secrets (PASSWORD / ALIAS)"
-            exit 1
-          fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
-          {
-            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
-            echo "keyPassword=$ANDROID_KEY_PASSWORD"
-            echo "keyAlias=$ANDROID_KEY_ALIAS"
-            echo "storeFile=upload-keystore.jks"
-          } > android/key.properties
-          echo "Android release keystore ready"
-        shell: bash
-
-      - name: Verify Windows runtime DLLs
-        if: matrix.flutter_platform == 'windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          dlls=(dlls/*.dll)
-          if [ ${#dlls[@]} -eq 0 ]; then
-            echo "::error::dlls/*.dll missing (need wintun.dll, Packet.dll)"
-            exit 1
-          fi
-          ls -la dlls/
-
-      - name: Build for ${{ matrix.platform }}
-        run: ${{ matrix.build_cmd }}
-        shell: bash
-
-      - name: Verify bundled astral-core
-        if: matrix.flutter_platform == 'windows' || matrix.flutter_platform == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ matrix.flutter_platform }}" = "windows" ]; then
-            test -f "${{ matrix.artifact_path }}/astral-core.exe"
-          else
-            test -f "${{ matrix.artifact_path }}/astral-core"
-          fi
-          ls -la "${{ matrix.artifact_path }}" | head
-
-      - name: Package Linux app
-        if: matrix.flutter_platform == 'linux'
-        run: |
-          mkdir -p release
-          cd ${{ matrix.artifact_path }}
-          tar -czf $GITHUB_WORKSPACE/release/${{ matrix.artifact_name }}.tar.gz *
-        shell: bash
-
-      - name: Compress Windows app
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $releaseDir = "release"
-          $buildDir = "${{ matrix.artifact_path }}"
-          $zipPath = Join-Path $releaseDir "${{ matrix.artifact_name }}.zip"
-          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
-          Compress-Archive -Path (Join-Path $buildDir "*") `
-                          -DestinationPath $zipPath `
-                          -Force
-
-      - name: App semver for installer
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $line = Get-Content "pubspec.yaml" | Where-Object { $_ -match '^\s*version:\s*' } | Select-Object -First 1
-          if (-not $line) { throw "version: not found in pubspec.yaml" }
-          if ($line -match 'version:\s*([0-9][^\s+#]*)') {
-            $v = $Matches[1]
-          } else {
-            throw "Could not parse version from: $line"
-          }
-          Add-Content -Path $env:GITHUB_ENV -Value "APP_VERSION=$v"
-          Write-Host "Installer semver: $v"
-
-      - name: Install Inno Setup
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
-
-      - name: Build Windows installer
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
-          & $iscc "installer/astral.iss" "/DMyAppVersion=$env:APP_VERSION"
-
-      - name: Upload Android APK
-        if: matrix.flutter_platform == 'android'
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
-          retention-days: 14
-
-      - name: Upload Linux package
-        if: matrix.flutter_platform == 'linux'
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: release/*.tar.gz
-          retention-days: 14
-
-      - name: Upload Windows zip
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: release/*.zip
-          retention-days: 14
-
-      - name: Upload Windows installer
-        if: matrix.flutter_platform == 'windows' && runner.os == 'Windows'
-        uses: actions/upload-artifact@v5
-        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: build.yml
           name: astral-windows-x64-setup
-          path: release_installer/astral-*-windows-x64-setup.exe
-          retention-days: 14
+          path: _dl/installer
+          search_artifacts: true
+          if_no_artifact_found: warn
 
-  release:
-    name: Publish Release
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v5
-        with:
-          path: release-assets
-
-      - name: List artifacts
-        run: find release-assets -type f
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release-assets/astral-android-arm64/*.apk
-            release-assets/astral-linux-x64/*.tar.gz
-            release-assets/astral-windows-x64/*.zip
-            release-assets/astral-windows-x64-setup/*.exe
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: 规范命名到 release/
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_VER: ${{ steps.cfg.outputs.version }}
+        run: |
+          set -euxo pipefail
+          mkdir -p release
+          pick() { find _dl -type f -name "$1" 2>/dev/null | head -1; }
+          f=$(pick '*.zip'); [ -n "$f" ] && cp -f "$f" "release/astral-${PKG_VER}-windows-x64.zip"
+          f=$(pick '*.tar.gz'); [ -n "$f" ] && cp -f "$f" "release/astral-${PKG_VER}-linux-x64.tar.gz"
+          f=$(find _dl/android-arm64 -name '*.apk' 2>/dev/null | head -1); [ -n "$f" ] && cp -f "$f" "release/astral-${PKG_VER}-android-arm64.apk"
+          f=$(find _dl/installer -name '*.exe' 2>/dev/null | head -1); [ -n "$f" ] && cp -f "$f" "release/astral-${PKG_VER}-windows-x64-setup.exe"
+          ls -la release/ || true
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.cfg.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ ! -d release ] || [ -z "$(ls -A release 2>/dev/null || true)" ]; then
+            echo "release/ 为空，无法创建 Release" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，跳过 create"
+            exit 0
+          fi
+          PRE=""
+          case "$TAG" in *-*) PRE="--prerelease";; esac
+          gh release create "$TAG" --title "Astral $TAG" $PRE release/*
